@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Starts the TypeScript agent layer against a stack already running locally.
+#
+# start.sh does not launch these, and nothing else drains the BullMQ queue the
+# backend enqueues to: without them the console accepts a run, reports it queued
+# and nothing ever picks it up. Same two commands and the same environment as
+# infra/docker/docker-compose.yml's x-agent-env anchor, with host-side hosts.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+
+[ -f .env ] || { echo "no .env — copy env.example first" >&2; exit 1; }
+
+# The backend checks this on every /internal call. Empty on either side answers
+# 503, so a run fails before its first model call rather than at the seam.
+AGENT_INTERNAL_TOKEN="$(sed -n 's/^AGENT_INTERNAL_TOKEN=//p' .env | head -1)"
+# Unquoted, because the backend reads .env through dotenv and gets the value
+# without them: a token carrying a literal `"` at each end is a different string,
+# and every /internal call answers 401 rather than 503 -- a run that fails at the
+# seam while both sides insist they were configured.
+AGENT_INTERNAL_TOKEN="${AGENT_INTERNAL_TOKEN%\"}"; AGENT_INTERNAL_TOKEN="${AGENT_INTERNAL_TOKEN#\"}"
+AGENT_INTERNAL_TOKEN="${AGENT_INTERNAL_TOKEN%\'}"; AGENT_INTERNAL_TOKEN="${AGENT_INTERNAL_TOKEN#\'}"
+if [ -z "$AGENT_INTERNAL_TOKEN" ]; then
+    echo "AGENT_INTERNAL_TOKEN is unset in .env; every /internal call would answer 503" >&2
+    exit 1
+fi
+export AGENT_INTERNAL_TOKEN
+export AEGIS_INTERNAL_TOKEN="$AGENT_INTERNAL_TOKEN"
+export AEGIS_TOOLS_TOKEN="$AGENT_INTERNAL_TOKEN"
+export AEGIS_TOOLS_TOKEN="$AGENT_INTERNAL_TOKEN"
+
+export POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
+export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+export POSTGRES_DB="${POSTGRES_DB:-deeptempo_soc}"
+export POSTGRES_USER="${POSTGRES_USER:-aegis_app}"
+export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}"
+export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
+
+# All four, with AEGIS_* primary and AEGIS_* fallback
+export AEGIS_PLAYBOOKS_URL="${AEGIS_PLAYBOOKS_URL:-${AEGIS_PLAYBOOKS_URL:-http://localhost:7787/internal/playbooks}}"
+export AEGIS_PLAYBOOKS_URL="$AEGIS_PLAYBOOKS_URL"
+export AEGIS_PRICING_URL="${AEGIS_PRICING_URL:-${AEGIS_PRICING_URL:-http://localhost:7787/internal/pricing}}"
+export AEGIS_PRICING_URL="$AEGIS_PRICING_URL"
+export AEGIS_RUNS_URL="${AEGIS_RUNS_URL:-${AEGIS_RUNS_URL:-http://localhost:7787/internal/runs}}"
+export AEGIS_RUNS_URL="$AEGIS_RUNS_URL"
+export AEGIS_TOOLS_URL="${AEGIS_TOOLS_URL:-${AEGIS_TOOLS_URL:-http://localhost:7787/internal/tools/invoke}}"
+export AEGIS_TOOLS_URL="$AEGIS_TOOLS_URL"
+export BIFROST_URL="${BIFROST_URL:-http://localhost:8080}"
+export AEGIS_ACTOR="${AEGIS_ACTOR:-${AEGIS_ACTOR:-$(whoami)}}"
+export AEGIS_ACTOR="$AEGIS_ACTOR"
+
+mkdir -p logs
+cd services/agent
+[ -d node_modules ] || npm install
+
+start() {
+    AGENT_HEALTH_PORT=6990 AGENT_HTTP_PORT=6989 \
+        nohup npx tsx "$1.ts" </dev/null > "$ROOT/logs/agent-$1.log" 2>&1 &
+    local pid=$!
+    echo $pid > "$ROOT/logs/agent-$1.pid"
+    disown $pid 2>/dev/null || true
+}
+start worker
+start serve
+
+for port in 6990 6989; do
+    for _ in $(seq 1 30); do
+        curl -sf -m 2 "http://localhost:$port/healthz" >/dev/null 2>&1 && break
+        sleep 1
+    done
+done
+
+echo "agent worker  → logs/agent-worker.log  (health :6990)"
+echo "agent serve   → logs/agent-serve.log   (health :6989)"
+echo "stop with: kill \$(cat logs/agent-worker.pid logs/agent-serve.pid)"

@@ -1,0 +1,83 @@
+# docker/Dockerfile.daemon
+# =============================================================================
+# Headless SOC daemon — autonomous orchestrator, no HTTP frontend
+#
+# Final image runs:  python services/daemon/main.py
+# Exposes ports:
+#   8081  webhook receiver  (DAEMON_WEBHOOK_PORT)
+#   9090  Prometheus metrics (DAEMON_METRICS_PORT)
+#   9091  health / status   (DAEMON_HEALTH_PORT)
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: install Python dependencies
+# ---------------------------------------------------------------------------
+# The Python version comes from .python-version, the repo's single pin. The
+# default below only applies to a bare `docker build` with no --build-arg; every
+# path that ships an image (docker-compose.yml, release.yml) passes the value
+# read from that file, so the images cannot drift from the venv and CI.
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim AS python-deps
+
+WORKDIR /install
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.lock .
+RUN pip install --no-cache-dir --prefix=/install/deps -r requirements.lock
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime image
+# ---------------------------------------------------------------------------
+FROM python:${PYTHON_VERSION}-slim AS runtime
+
+ARG AEGIS_VERSION=dev
+LABEL org.opencontainers.image.version="${AEGIS_VERSION}"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libpq5 \
+      curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -g 1000 aegis && useradd -u 1000 -g 1000 -d /home/aegis -m -s /sbin/nologin aegis
+
+WORKDIR /app
+
+COPY --from=python-deps /install/deps /usr/local
+
+# Daemon-specific source
+COPY --chown=aegis:aegis core/        ./core/
+COPY --chown=aegis:aegis services/    ./services/
+COPY --chown=aegis:aegis tools/       ./tools/
+# Schema init SQL: source moved to infra/database/init (R6). Keep the in-image
+# path /app/database/init stable so desktop packaging (`docker cp
+# <cid>:/app/database/init`) and the initdb mount are unaffected.
+COPY --chown=aegis:aegis infra/database/init/ ./database/init/
+COPY --chown=aegis:aegis data/        ./data/
+COPY --chown=aegis:aegis VERSION      ./VERSION
+COPY --chown=aegis:aegis setup.cfg    ./setup.cfg
+
+# Persistent investigation artifacts (mount a PVC here in K8s) and user home state
+RUN mkdir -p /app/data/investigations /home/aegis/.aegis \
+    && chown -R aegis:aegis /app/data /home/aegis
+
+RUN echo "${AEGIS_VERSION}" > /app/VERSION
+
+USER aegis
+
+ENV HOME=/home/aegis \
+    PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    DAEMON_WEBHOOK_PORT=8081 \
+    DAEMON_METRICS_PORT=9090 \
+    DAEMON_HEALTH_PORT=9091
+
+EXPOSE 8081 9090 9091
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD curl -fsS http://localhost:9091/health || exit 1
+
+CMD ["python", "services/daemon/main.py"]

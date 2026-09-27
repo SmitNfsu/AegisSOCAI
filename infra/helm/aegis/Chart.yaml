@@ -1,0 +1,42 @@
+apiVersion: v2
+name: aegissoc
+description: AegisSOC AI — Autonomous Agentic Security Operations Center
+type: application
+version: 0.5.0
+appVersion: 0.5.0
+kubeVersion: '>=1.25.0-0'
+home: https://aegissoc.org
+sources:
+  - https://github.com/AegisSOC/aegis
+maintainers:
+  - name: AegisSOC
+    url: https://github.com/AegisSOC
+keywords:
+  - security
+  - soc
+  - siem
+  - ai
+  - claude
+  - anthropic
+  - mcp
+icon: https://aegissoc.org/logo.png
+annotations:
+  artifacthub.io/category: security
+  artifacthub.io/license: Apache-2.0
+dependencies:
+  - name: postgresql
+    version: 16.2.2
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.bitnami.enabled
+    import-values:
+      - child: auth
+        parent: postgresql.bitnami.auth
+  - name: redis
+    version: 20.3.0
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.bitnami.enabled
+  - name: opentelemetry-collector
+    version: 0.108.0
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+    condition: otelCollector.enabled
+    alias: otelCollector
