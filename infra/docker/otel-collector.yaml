@@ -1,0 +1,57 @@
+# OpenTelemetry Collector configuration for AegisSOC
+#
+# Receives OTLP spans and metrics from all AegisSOC processes,
+# then fans out to Jaeger (traces) and Prometheus (metrics).
+# No external exporters — all data stays within the SOC network.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+  # Drop spans/metrics that have no service.name to avoid noisy cardinality
+  filter/drop_unnamed:
+    error_mode: ignore
+    traces:
+      span:
+        - 'resource.attributes["service.name"] == ""'
+
+exporters:
+  # Jaeger receives traces via OTLP gRPC (all-in-one image supports this natively)
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Prometheus pulls metrics from the collector's built-in exporter endpoint.
+  # No namespace prefix: series must carry the same names here as on the
+  # direct backend/daemon scrapes so one PromQL name fits both routes.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    const_labels:
+      environment: docker
+
+  # Minimal debug output — change to "detailed" for local troubleshooting
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, filter/drop_unnamed]
+      exporters: [otlp/jaeger, debug]
+
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus, debug]

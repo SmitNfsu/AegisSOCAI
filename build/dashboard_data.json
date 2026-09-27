@@ -1,0 +1,1491 @@
+{
+  "brand": "AegisSOC AI",
+  "problem": "E1 \u2014 AI-driven, risk-based SOC incident triage",
+  "curated": {
+    "alerts": 11,
+    "sources": [
+      "CrowdStrike",
+      "Entra ID",
+      "Purview",
+      "Suricata",
+      "Umbrella",
+      "Zeek"
+    ],
+    "incidents": 5,
+    "reduction": 2.2,
+    "queue": [
+      {
+        "compliance": {
+          "breach": true,
+          "reportable": true,
+          "pii_exposed": true,
+          "data_classes": [
+            "PII_HIGH"
+          ],
+          "notice_required": true,
+          "penalty_headline": "up to \u20b9250 Cr (DPDP)",
+          "summary": "Personal-data breach (PII_HIGH). DPDP + CERT-In obligations triggered \u2014 statutory clocks running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": {
+                "label": "CERT-In report",
+                "remaining_h": 4.42,
+                "status": "green",
+                "window_h": 6
+              }
+            },
+            {
+              "framework": "DPDP Act 2023 \u00a78(6) \u00b7 Rules 2025",
+              "regulator": "Data Protection Board of India",
+              "jurisdiction": "India",
+              "duty": "Intimate the Board + affected Data Principals without delay; detailed report to the Board within 72h.",
+              "penalty": "Up to \u20b9250 Cr (safeguards) / \u20b9200 Cr (notification)",
+              "in_force": "Rules 2025 notified; breach provisions phasing in (~2027)",
+              "clock": {
+                "label": "DPDP Board report",
+                "remaining_h": 70.42,
+                "status": "green",
+                "window_h": 72
+              }
+            },
+            {
+              "framework": "GDPR Art. 33/34",
+              "regulator": "EU Supervisory Authority",
+              "jurisdiction": "EU (if EU data subjects)",
+              "duty": "Notify the DPA within 72h; notify data subjects if high risk.",
+              "penalty": "Up to \u20ac20M or 4% of global turnover",
+              "in_force": "in force",
+              "clock": {
+                "label": "GDPR DPA notice",
+                "remaining_h": 70.42,
+                "status": "green",
+                "window_h": 72
+              }
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 88.1,
+        "n_alerts": 6,
+        "furthest_tactic": "Exfiltration",
+        "headline_asset": "host:db-prod-01",
+        "n_assets": 4,
+        "tactics": [
+          "Collection",
+          "CredentialAccess",
+          "Execution",
+          "Exfiltration",
+          "InitialAccess",
+          "LateralMovement"
+        ],
+        "chain": [
+          {
+            "tactic": "InitialAccess",
+            "source": "CrowdStrike",
+            "title": "Phishing attachment opened",
+            "technique": null,
+            "alert_id": "EDR-5521",
+            "at": "+0m"
+          },
+          {
+            "tactic": "Execution",
+            "source": "CrowdStrike",
+            "title": "Malicious macro spawned PowerShell",
+            "technique": "T1059.001",
+            "alert_id": "EDR-5522",
+            "at": "+4m"
+          },
+          {
+            "tactic": "CredentialAccess",
+            "source": "CrowdStrike",
+            "title": "LSASS credential access",
+            "technique": "T1003.001",
+            "alert_id": "EDR-5530",
+            "at": "+15m"
+          },
+          {
+            "tactic": "LateralMovement",
+            "source": "Zeek",
+            "title": "SMB lateral movement to DB server",
+            "technique": null,
+            "alert_id": "NET-8801",
+            "at": "+25m"
+          },
+          {
+            "tactic": "Collection",
+            "source": "Purview",
+            "title": "Bulk records staged from database",
+            "technique": null,
+            "alert_id": "DLP-1207",
+            "at": "+35m"
+          },
+          {
+            "tactic": "Exfiltration",
+            "source": "Zeek",
+            "title": "Large outbound transfer to rare ASN",
+            "technique": "T1048.003",
+            "alert_id": "NET-8899",
+            "at": "+45m"
+          }
+        ],
+        "why": [
+          "reached 'Exfiltration' stage of the attack (+24)",
+          "highest-value asset is crown-jewel (+20)",
+          "6 distinct attack stage(s) correlated (+15)",
+          "detection confidence 90% (+14)",
+          "6 correlated alert(s), named threat family (+9)",
+          "4 asset(s) affected (+7)"
+        ],
+        "narrative": "P1 \u2014 a 6-stage attack reached Exfiltration on crown-jewel host:db-prod-01 and 3 other asset(s), corroborated by 6 alert(s), linked to a named threat family. Recommend: Isolate the affected asset and open an incident now.",
+        "grade": null,
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 20.0,
+            "reason": "highest-value asset is crown-jewel"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 23.8,
+            "reason": "reached 'Exfiltration' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 15.0,
+            "reason": "6 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 6.8,
+            "reason": "4 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 13.5,
+            "reason": "detection confidence 90%"
+          },
+          {
+            "name": "corroboration",
+            "points": 9.0,
+            "reason": "6 correlated alert(s), named threat family"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [
+            "FINANCIAL_CDE"
+          ],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": {
+                "label": "CERT-In report",
+                "remaining_h": 4.5,
+                "status": "green",
+                "window_h": 6
+              }
+            },
+            {
+              "framework": "PCI-DSS v4.0 \u00b7 RBI",
+              "regulator": "Card schemes / RBI (India)",
+              "jurisdiction": "Global / India",
+              "duty": "Invoke IR (Req 12.10); notify acquirer/card brands and RBI per directions.",
+              "penalty": "Fines + loss of card-processing privileges",
+              "in_force": "in force",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P2",
+        "score": 53.2,
+        "n_alerts": 2,
+        "furthest_tactic": "CredentialAccess",
+        "headline_asset": "host:srv-app-07",
+        "n_assets": 2,
+        "tactics": [
+          "CredentialAccess",
+          "InitialAccess"
+        ],
+        "chain": [
+          {
+            "tactic": "CredentialAccess",
+            "source": "Suricata",
+            "title": "RDP brute force",
+            "technique": null,
+            "alert_id": "IDS-3310",
+            "at": "+0m"
+          },
+          {
+            "tactic": "InitialAccess",
+            "source": "Entra ID",
+            "title": "Successful login after many failures",
+            "technique": null,
+            "alert_id": "AUTH-77",
+            "at": "+15m"
+          }
+        ],
+        "why": [
+          "reached 'CredentialAccess' stage of the attack (+18)",
+          "highest-value asset is server (+13)",
+          "detection confidence 60% (+9)",
+          "2 distinct attack stage(s) correlated (+6)",
+          "2 correlated alert(s) (+4)",
+          "2 asset(s) affected (+3)"
+        ],
+        "narrative": "P2 \u2014 a 2-stage attack reached CredentialAccess on server host:srv-app-07 and 1 other asset(s), corroborated by 2 alert(s). Recommend: Assign to an analyst this shift.",
+        "grade": null,
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 13.3,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 17.5,
+            "reason": "reached 'CredentialAccess' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 6.0,
+            "reason": "2 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 3.4,
+            "reason": "2 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 9.0,
+            "reason": "detection confidence 60%"
+          },
+          {
+            "name": "corroboration",
+            "points": 4.0,
+            "reason": "2 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": {
+                "label": "CERT-In report",
+                "remaining_h": 4.64,
+                "status": "green",
+                "window_h": 6
+              }
+            }
+          ]
+        },
+        "band": "P3",
+        "score": 35.9,
+        "n_alerts": 1,
+        "furthest_tactic": "CommandAndControl",
+        "headline_asset": "host:ws-208",
+        "n_assets": 1,
+        "tactics": [
+          "CommandAndControl"
+        ],
+        "chain": [
+          {
+            "tactic": "CommandAndControl",
+            "source": "Umbrella",
+            "title": "Lookup to newly-registered domain",
+            "technique": null,
+            "alert_id": "DNS-4400",
+            "at": "+0m"
+          }
+        ],
+        "why": [
+          "reached 'CommandAndControl' stage of the attack (+20)",
+          "highest-value asset is workstation (+7)",
+          "detection confidence 25% (+4)",
+          "1 distinct attack stage(s) correlated (+3)",
+          "1 correlated alert(s) (+2)"
+        ],
+        "narrative": "P3 \u2014 activity reached CommandAndControl on workstation host:ws-208, corroborated by 1 alert(s). Recommend: Queue for review; corroborate before acting.",
+        "grade": null,
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 6.7,
+            "reason": "highest-value asset is workstation"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 20.0,
+            "reason": "reached 'CommandAndControl' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 3.0,
+            "reason": "1 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 0.0,
+            "reason": "1 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 3.8,
+            "reason": "detection confidence 25%"
+          },
+          {
+            "name": "corroboration",
+            "points": 2.5,
+            "reason": "1 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": {
+                "label": "CERT-In report",
+                "remaining_h": 4.56,
+                "status": "green",
+                "window_h": 6
+              }
+            }
+          ]
+        },
+        "band": "P3",
+        "score": 33.7,
+        "n_alerts": 1,
+        "furthest_tactic": "Malware",
+        "headline_asset": "host:ws-155",
+        "n_assets": 1,
+        "tactics": [
+          "Malware"
+        ],
+        "chain": [
+          {
+            "tactic": "Malware",
+            "source": "CrowdStrike",
+            "title": "EICAR test file quarantined",
+            "technique": null,
+            "alert_id": "EDR-6100",
+            "at": "+0m"
+          }
+        ],
+        "why": [
+          "reached 'Malware' stage of the attack (+16)",
+          "highest-value asset is workstation (+7)",
+          "detection confidence 35% (+5)",
+          "1 distinct attack stage(s) correlated (+3)",
+          "1 correlated alert(s) (+2)"
+        ],
+        "narrative": "P3 \u2014 activity reached Malware on workstation host:ws-155, corroborated by 1 alert(s). Recommend: Queue for review; corroborate before acting.",
+        "grade": null,
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 6.7,
+            "reason": "highest-value asset is workstation"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 16.2,
+            "reason": "reached 'Malware' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 3.0,
+            "reason": "1 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 0.0,
+            "reason": "1 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 5.2,
+            "reason": "detection confidence 35%"
+          },
+          {
+            "name": "corroboration",
+            "points": 2.5,
+            "reason": "1 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": false,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "\u2014",
+          "summary": "No statutory reporting obligation identified.",
+          "obligations": []
+        },
+        "band": "P3",
+        "score": 27.6,
+        "n_alerts": 1,
+        "furthest_tactic": "Discovery",
+        "headline_asset": "host:ws-311",
+        "n_assets": 2,
+        "tactics": [
+          "Discovery"
+        ],
+        "chain": [
+          {
+            "tactic": "Discovery",
+            "source": "Suricata",
+            "title": "Internal port scan",
+            "technique": null,
+            "alert_id": "IDS-9002",
+            "at": "+0m"
+          }
+        ],
+        "why": [
+          "reached 'Discovery' stage of the attack (+8)",
+          "highest-value asset is workstation (+7)",
+          "detection confidence 30% (+4)",
+          "2 asset(s) affected (+3)",
+          "1 distinct attack stage(s) correlated (+3)",
+          "1 correlated alert(s) (+2)"
+        ],
+        "narrative": "P3 \u2014 activity reached Discovery on workstation host:ws-311 and 1 other asset(s), corroborated by 1 alert(s). Recommend: Queue for review; corroborate before acting.",
+        "grade": null,
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 6.7,
+            "reason": "highest-value asset is workstation"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 7.5,
+            "reason": "reached 'Discovery' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 3.0,
+            "reason": "1 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 3.4,
+            "reason": "2 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 4.5,
+            "reason": "detection confidence 30%"
+          },
+          {
+            "name": "corroboration",
+            "points": 2.5,
+            "reason": "1 correlated alert(s)"
+          }
+        ]
+      }
+    ]
+  },
+  "guide": {
+    "incidents": 9980,
+    "alerts": 131954,
+    "reduction": 13.2,
+    "ndcg_vs_analyst": 0.896,
+    "spearman_vs_analyst": 0.308,
+    "held_out_incidents": 3000,
+    "metrics_note": "held-out orgs (never seen during weight fit)",
+    "top": [
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 85.1,
+        "n_alerts": 46,
+        "furthest_tactic": "Exfiltration",
+        "headline_asset": "host:98799",
+        "n_assets": 22,
+        "tactics": [
+          "Collection",
+          "CommandAndControl",
+          "CredentialAccess",
+          "Exfiltration",
+          "Persistence",
+          "SuspiciousActivity"
+        ],
+        "chain": [],
+        "why": [
+          "6 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "reached 'Exfiltration' stage of the attack (+10)",
+          "46 correlated alert(s) (+8)",
+          "22 asset(s) affected (+7)"
+        ],
+        "narrative": "P1 \u2014 a 6-stage attack reached Exfiltration on server host:98799 and 21 other asset(s), corroborated by 46 alert(s). Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "BenignPositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 9.5,
+            "reason": "reached 'Exfiltration' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "6 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 7.0,
+            "reason": "22 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 60%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "46 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 83.2,
+        "n_alerts": 98,
+        "furthest_tactic": "Exfiltration",
+        "headline_asset": "host:9947",
+        "n_assets": 9,
+        "tactics": [
+          "Collection",
+          "CredentialAccess",
+          "DefenseEvasion",
+          "Execution",
+          "Exfiltration",
+          "LateralMovement",
+          "Malware",
+          "Persistence",
+          "SuspiciousActivity"
+        ],
+        "chain": [],
+        "why": [
+          "9 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "reached 'Exfiltration' stage of the attack (+10)",
+          "98 correlated alert(s) (+8)",
+          "9 asset(s) affected (+5)"
+        ],
+        "narrative": "P1 \u2014 a 9-stage attack reached Exfiltration on server host:9947 and 8 other asset(s), corroborated by 98 alert(s). Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "TruePositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 9.5,
+            "reason": "reached 'Exfiltration' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "9 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 5.1,
+            "reason": "9 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 95%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "98 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 83.1,
+        "n_alerts": 115,
+        "furthest_tactic": "LateralMovement",
+        "headline_asset": "host:527",
+        "n_assets": 22,
+        "tactics": [
+          "CredentialAccess",
+          "DefenseEvasion",
+          "Discovery",
+          "Execution",
+          "LateralMovement",
+          "Malware",
+          "Persistence",
+          "SuspiciousActivity"
+        ],
+        "chain": [],
+        "why": [
+          "8 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "115 correlated alert(s), named threat family (+8)",
+          "reached 'LateralMovement' stage of the attack (+8)",
+          "22 asset(s) affected (+7)"
+        ],
+        "narrative": "P1 \u2014 a 8-stage attack reached LateralMovement on server host:527 and 21 other asset(s), corroborated by 115 alert(s), linked to a named threat family. Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "BenignPositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 7.5,
+            "reason": "reached 'LateralMovement' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "8 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 7.0,
+            "reason": "22 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 95%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "115 correlated alert(s), named threat family"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 83.1,
+        "n_alerts": 108,
+        "furthest_tactic": "LateralMovement",
+        "headline_asset": "host:98799",
+        "n_assets": 24,
+        "tactics": [
+          "CredentialAccess",
+          "Discovery",
+          "Execution",
+          "LateralMovement",
+          "Persistence"
+        ],
+        "chain": [],
+        "why": [
+          "5 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "108 correlated alert(s) (+8)",
+          "reached 'LateralMovement' stage of the attack (+8)",
+          "24 asset(s) affected (+7)"
+        ],
+        "narrative": "P1 \u2014 a 5-stage attack reached LateralMovement on server host:98799 and 23 other asset(s), corroborated by 108 alert(s). Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "FalsePositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 7.5,
+            "reason": "reached 'LateralMovement' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "5 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 7.0,
+            "reason": "24 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 60%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "108 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 83.1,
+        "n_alerts": 167,
+        "furthest_tactic": "LateralMovement",
+        "headline_asset": "host:54047",
+        "n_assets": 99,
+        "tactics": [
+          "CredentialAccess",
+          "Discovery",
+          "Execution",
+          "LateralMovement",
+          "Persistence"
+        ],
+        "chain": [],
+        "why": [
+          "5 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "167 correlated alert(s) (+8)",
+          "reached 'LateralMovement' stage of the attack (+8)",
+          "99 asset(s) affected (+7)"
+        ],
+        "narrative": "P1 \u2014 a 5-stage attack reached LateralMovement on server host:54047 and 98 other asset(s), corroborated by 167 alert(s). Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "BenignPositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 7.5,
+            "reason": "reached 'LateralMovement' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "5 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 7.0,
+            "reason": "99 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 60%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "167 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 83.1,
+        "n_alerts": 333,
+        "furthest_tactic": "LateralMovement",
+        "headline_asset": "host:98799",
+        "n_assets": 123,
+        "tactics": [
+          "CredentialAccess",
+          "Discovery",
+          "Execution",
+          "LateralMovement",
+          "Persistence"
+        ],
+        "chain": [],
+        "why": [
+          "5 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "333 correlated alert(s) (+8)",
+          "reached 'LateralMovement' stage of the attack (+8)",
+          "123 asset(s) affected (+7)"
+        ],
+        "narrative": "P1 \u2014 a 5-stage attack reached LateralMovement on server host:98799 and 122 other asset(s), corroborated by 333 alert(s). Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "TruePositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 7.5,
+            "reason": "reached 'LateralMovement' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "5 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 7.0,
+            "reason": "123 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 60%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "333 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 82.6,
+        "n_alerts": 55,
+        "furthest_tactic": "LateralMovement",
+        "headline_asset": "host:98799",
+        "n_assets": 17,
+        "tactics": [
+          "CredentialAccess",
+          "Discovery",
+          "Execution",
+          "LateralMovement",
+          "Persistence"
+        ],
+        "chain": [],
+        "why": [
+          "5 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "55 correlated alert(s) (+8)",
+          "reached 'LateralMovement' stage of the attack (+8)",
+          "17 asset(s) affected (+7)"
+        ],
+        "narrative": "P1 \u2014 a 5-stage attack reached LateralMovement on server host:98799 and 16 other asset(s), corroborated by 55 alert(s). Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "BenignPositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 7.5,
+            "reason": "reached 'LateralMovement' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "5 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 6.5,
+            "reason": "17 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 95%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "55 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 82.3,
+        "n_alerts": 289,
+        "furthest_tactic": "CommandAndControl",
+        "headline_asset": "host:98799",
+        "n_assets": 12,
+        "tactics": [
+          "CommandAndControl",
+          "CredentialAccess",
+          "DefenseEvasion",
+          "Discovery",
+          "Execution",
+          "Exploit",
+          "InitialAccess",
+          "Malware",
+          "Ransomware",
+          "SuspiciousActivity"
+        ],
+        "chain": [],
+        "why": [
+          "10 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "289 correlated alert(s), named threat family (+8)",
+          "reached 'CommandAndControl' stage of the attack (+8)",
+          "12 asset(s) affected (+6)"
+        ],
+        "narrative": "P1 \u2014 a 10-stage attack reached CommandAndControl on server host:98799 and 11 other asset(s), corroborated by 289 alert(s), linked to a named threat family. Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "BenignPositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 8.0,
+            "reason": "reached 'CommandAndControl' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "10 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 5.7,
+            "reason": "12 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 95%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "289 correlated alert(s), named threat family"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 81.4,
+        "n_alerts": 68,
+        "furthest_tactic": "CommandAndControl",
+        "headline_asset": "host:98799",
+        "n_assets": 8,
+        "tactics": [
+          "CommandAndControl",
+          "DefenseEvasion",
+          "Execution",
+          "Malware",
+          "Persistence"
+        ],
+        "chain": [],
+        "why": [
+          "5 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "68 correlated alert(s) (+8)",
+          "reached 'CommandAndControl' stage of the attack (+8)",
+          "8 asset(s) affected (+5)"
+        ],
+        "narrative": "P1 \u2014 a 5-stage attack reached CommandAndControl on server host:98799 and 7 other asset(s), corroborated by 68 alert(s). Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "TruePositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 8.0,
+            "reason": "reached 'CommandAndControl' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "5 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 4.8,
+            "reason": "8 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 60%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "68 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 81.2,
+        "n_alerts": 62,
+        "furthest_tactic": "LateralMovement",
+        "headline_asset": "host:98799",
+        "n_assets": 9,
+        "tactics": [
+          "Discovery",
+          "Execution",
+          "LateralMovement",
+          "Malware",
+          "Persistence"
+        ],
+        "chain": [],
+        "why": [
+          "5 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "62 correlated alert(s) (+8)",
+          "reached 'LateralMovement' stage of the attack (+8)",
+          "9 asset(s) affected (+5)"
+        ],
+        "narrative": "P1 \u2014 a 5-stage attack reached LateralMovement on server host:98799 and 8 other asset(s), corroborated by 62 alert(s). Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "BenignPositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 7.5,
+            "reason": "reached 'LateralMovement' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "5 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 5.1,
+            "reason": "9 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 95%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "62 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 81.2,
+        "n_alerts": 9,
+        "furthest_tactic": "Exfiltration",
+        "headline_asset": "host:98799",
+        "n_assets": 7,
+        "tactics": [
+          "CredentialAccess",
+          "Discovery",
+          "Exfiltration",
+          "InitialAccess",
+          "Malware"
+        ],
+        "chain": [],
+        "why": [
+          "5 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "reached 'Exfiltration' stage of the attack (+10)",
+          "9 correlated alert(s) (+7)",
+          "7 asset(s) affected (+4)"
+        ],
+        "narrative": "P1 \u2014 a 5-stage attack reached Exfiltration on server host:98799 and 6 other asset(s), corroborated by 9 alert(s). Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "TruePositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 9.5,
+            "reason": "reached 'Exfiltration' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "5 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 4.5,
+            "reason": "7 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 60%"
+          },
+          {
+            "name": "corroboration",
+            "points": 6.7,
+            "reason": "9 correlated alert(s)"
+          }
+        ]
+      },
+      {
+        "compliance": {
+          "breach": false,
+          "reportable": true,
+          "pii_exposed": false,
+          "data_classes": [],
+          "notice_required": false,
+          "penalty_headline": "IT Act \u00a770B (CERT-In)",
+          "summary": "Reportable cyber incident \u2014 CERT-In 6-hour clock running.",
+          "obligations": [
+            {
+              "framework": "CERT-In Directions 2022",
+              "regulator": "CERT-In (MeitY)",
+              "jurisdiction": "India",
+              "duty": "Report the incident to CERT-In within 6 hours of becoming aware (Annexure I).",
+              "penalty": "Non-compliance punishable under IT Act \u00a770B(7)",
+              "in_force": "in force (since Jun 2022)",
+              "clock": null
+            }
+          ]
+        },
+        "band": "P1",
+        "score": 81.1,
+        "n_alerts": 1835,
+        "furthest_tactic": "CommandAndControl",
+        "headline_asset": "host:4",
+        "n_assets": 7,
+        "tactics": [
+          "CommandAndControl",
+          "CredentialAccess",
+          "DefenseEvasion",
+          "Discovery",
+          "Exploit",
+          "InitialAccess",
+          "Malware",
+          "PrivilegeEscalation",
+          "Ransomware",
+          "SuspiciousActivity",
+          "UnwantedSoftware"
+        ],
+        "chain": [],
+        "why": [
+          "11 distinct attack stage(s) correlated (+32)",
+          "highest-value asset is server (+29)",
+          "1835 correlated alert(s), named threat family (+8)",
+          "reached 'CommandAndControl' stage of the attack (+8)",
+          "7 asset(s) affected (+4)"
+        ],
+        "narrative": "P1 \u2014 a 11-stage attack reached CommandAndControl on server host:4 and 6 other asset(s), corroborated by 1835 alert(s), linked to a named threat family. Recommend: Isolate the affected asset and open an incident now.",
+        "grade": "BenignPositive",
+        "factors": [
+          {
+            "name": "asset_criticality",
+            "points": 28.8,
+            "reason": "highest-value asset is server"
+          },
+          {
+            "name": "kill_chain_stage",
+            "points": 8.0,
+            "reason": "reached 'CommandAndControl' stage of the attack"
+          },
+          {
+            "name": "kill_chain_progression",
+            "points": 31.7,
+            "reason": "11 distinct attack stage(s) correlated"
+          },
+          {
+            "name": "blast_radius",
+            "points": 4.5,
+            "reason": "7 asset(s) affected"
+          },
+          {
+            "name": "detection_confidence",
+            "points": 0.0,
+            "reason": "detection confidence 95%"
+          },
+          {
+            "name": "corroboration",
+            "points": 8.1,
+            "reason": "1835 correlated alert(s), named threat family"
+          }
+        ]
+      }
+    ]
+  }
+}

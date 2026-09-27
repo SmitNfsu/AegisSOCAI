@@ -1,0 +1,87 @@
+<svg width="350" height="80" viewBox="0 0 350 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="aegis-full-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stopColor="#00F0FF" />
+      <stop offset="50%" stopColor="#00A2FF" />
+      <stop offset="100%" stopColor="#0051FF" />
+    </linearGradient>
+    <linearGradient id="aegis-ai-badge" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stopColor="#00F0FF" />
+      <stop offset="100%" stopColor="#0088FF" />
+    </linearGradient>
+  </defs>
+
+  {/* Embedded Mark */}
+  <g transform="translate(4, 5) scale(0.7)">
+    <path
+      d="M50 4L88 19V54C88 75.5 50 96 50 96C50 96 12 75.5 12 54V19L50 4Z"
+      stroke="url(#aegis-full-grad)"
+      stroke-width="5"
+      stroke-linejoin="round"
+      fill="rgba(0, 240, 255, 0.12)"
+    />
+    <path d="M22 24L50 13L78 24" stroke="url(#aegis-full-grad)" stroke-width="2.5" stroke-linecap="round" opacity="0.8" />
+    <path
+      d="M50 22L72 68H60L50 46L40 68H28L50 22Z"
+      fill="url(#aegis-full-grad)"
+    />
+    <path
+      d="M37 57H63L65 62H35L37 57Z"
+      fill="#00F0FF"
+    />
+    <polygon
+      points="50,38 55,45 50,52 45,45"
+      fill="#FFFFFF"
+    />
+  </g>
+
+  {/* Typography: "Aegis" */}
+  <text
+    x="84"
+    y="50"
+    fill="#FFFFFF"
+    font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    font-size="34"
+    font-weight="800"
+    letter-spacing="-0.03em"
+  >
+    Aegis
+  </text>
+
+  {/* Typography: "SOC" */}
+  <text
+    x="172"
+    y="50"
+    fill="url(#aegis-full-grad)"
+    font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+    font-size="34"
+    font-weight="800"
+    letter-spacing="0.02em"
+  >
+    SOC
+  </text>
+
+  {/* Badge: "AI" */}
+  <g transform="translate(254, 25)">
+    <rect
+      x="0"
+      y="0"
+      width="44"
+      height="27"
+      rx="6"
+      fill="url(#aegis-ai-badge)"
+    />
+    <text
+      x="22"
+      y="18.5"
+      fill="#0B0F19"
+      font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+      font-size="15"
+      font-weight="900"
+      letter-spacing="0.05em"
+      text-anchor="middle"
+    >
+      AI
+    </text>
+  </g>
+</svg>

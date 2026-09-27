@@ -1,0 +1,933 @@
+"""
+Database connection management for AegisSOC.
+
+Handles database connections, session management, and connection pooling.
+"""
+
+import asyncio
+import logging
+import threading
+import time
+from contextlib import contextmanager
+from dataclasses import astuple, dataclass, field
+from typing import TYPE_CHECKING, Any, Dict, Generator, Optional
+from urllib.parse import parse_qsl, quote, unquote, urlsplit
+
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+
+if TYPE_CHECKING:
+    from core.storage.db_proxy import ProxyConfig
+
+from core.config import get_settings
+from core.secrets import get_secret
+
+# Import all models to register them with Base.metadata before create_all().
+# Unused by name, which is the point -- the import is the registration.
+from core.storage.models import (  # noqa: F401
+    AIDecisionLog,
+    Base,
+    Case,
+    CaseAttachment,
+    CaseAuditLog,
+    CaseClosureInfo,
+    CaseComment,
+    CaseEscalation,
+    CaseEvidence,
+    CaseIOC,
+    CaseMetrics,
+    CaseNotification,
+    CaseRelationship,
+    CaseSLA,
+    CaseTask,
+    CaseTemplate,
+    CaseWatcher,
+    ChatMessage,
+    ConfigAuditLog,
+    Conversation,
+    CustomAgent,
+    CustomWorkflow,
+    Finding,
+    FindingMitrePrediction,
+    IntakeTrigger,
+    IntegrationConfig,
+    Investigation,
+    InvestigationLog,
+    LLMInteractionLog,
+    LLMProviderConfig,
+    Role,
+    SharedIOC,
+    SketchMapping,
+    Skill,
+    SLAPolicy,
+    SystemConfig,
+    User,
+    UserPreference,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# Secrets-store keys for the platform DB proxy. Read at boot before
+# the DB engine exists, so they must live in the encrypted secrets
+# store (DB-independent), not SystemConfig.
+_PLATFORM_DB_PROXY_KEYS = {
+    "proxy_type": "PLATFORM_DB_PROXY_TYPE",
+    "proxy_host": "PLATFORM_DB_PROXY_HOST",
+    "proxy_port": "PLATFORM_DB_PROXY_PORT",
+    "proxy_username": "PLATFORM_DB_PROXY_USERNAME",
+    "proxy_password": "PLATFORM_DB_PROXY_PASSWORD",
+    "ssh_private_key_path": "PLATFORM_DB_SSH_PRIVATE_KEY_PATH",
+    "ssh_key_passphrase": "PLATFORM_DB_SSH_KEY_PASSPHRASE",
+    "verify_proxy_tls": "PLATFORM_DB_VERIFY_PROXY_TLS",
+}
+
+
+def _load_platform_db_proxy() -> "ProxyConfig":
+    """Read platform-DB proxy settings from the encrypted secrets store.
+
+    Imports are local because core.storage.db_proxy imports
+    ``core.secrets_manager`` which itself isn't part of database/'s
+    boot dependency. Returns a disabled ProxyConfig when nothing is
+    configured.
+    """
+    try:
+        from core.secrets_manager import get_secret
+        from core.storage.db_proxy import ProxyConfig
+    except ImportError:
+        # If the secrets manager isn't importable yet skip proxy support gracefully.
+        from core.storage.db_proxy import ProxyConfig
+
+        return ProxyConfig()
+
+    raw: dict[str, object] = {}
+    # `attr`, not `field`: dataclasses.field is imported at module scope.
+    for attr, secret_key in _PLATFORM_DB_PROXY_KEYS.items():
+        value = get_secret(secret_key)
+        if value is not None and value != "":
+            raw[attr] = value
+    if not raw or (raw.get("proxy_type") or "none").lower() in ("", "none"):
+        return ProxyConfig()
+    raw.setdefault("verify_proxy_tls", True)
+    if isinstance(raw.get("verify_proxy_tls"), str):
+        raw["verify_proxy_tls"] = raw["verify_proxy_tls"].lower() not in (
+            "false",
+            "0",
+            "no",
+            "off",
+        )
+    # Password / passphrase already came out of the secrets store, so
+    # we don't pass *_secret_key to from_dict — values are inline.
+    return ProxyConfig.from_dict(raw)
+
+
+# libpq parameters we accept from a user-supplied DSN. Everything else is
+# rejected: sslcert/sslkey/sslrootcert/passfile/service take *local file paths*,
+# so honouring them would hand an authenticated admin a file-read/probe
+# primitive against the backend host. Allowlist, not blocklist.
+_ALLOWED_DSN_PARAMS = frozenset(
+    {"sslmode", "connect_timeout", "application_name", "target_session_attrs"}
+)
+_ALLOWED_DSN_SCHEMES = frozenset({"postgresql", "postgres", "postgresql+psycopg2"})
+
+
+@dataclass(frozen=True)
+class ParsedDsn:
+    """A validated PostgreSQL connection string."""
+
+    host: str
+    port: int
+    database: str
+    user: str
+    password: str
+    query: Dict[str, str] = field(default_factory=dict)
+
+
+def parse_connection_string(dsn: str) -> ParsedDsn:
+    dsn = (dsn or "").strip()
+    if not dsn:
+        raise ValueError("empty connection string")
+
+    parts = urlsplit(dsn)
+    if parts.scheme not in _ALLOWED_DSN_SCHEMES:
+        raise ValueError(f"unsupported scheme: {parts.scheme or '(none)'}")
+
+    try:
+        port = parts.port or 5432
+    except ValueError:
+        raise ValueError("port must be numeric") from None
+
+    # Decode before validating: urlsplit leaves the host percent-encoded, so a
+    # raw startswith("/") check misses "%2Fvar%2Frun" — which SQLAlchemy would
+    # decode straight back into a unix socket path.
+    host = unquote(parts.hostname or "")
+    if not host:
+        raise ValueError("missing host")
+    if host.startswith("/"):
+        raise ValueError("unix socket paths are not supported")
+    if any(c.isspace() or ord(c) < 32 for c in host):
+        raise ValueError("host contains invalid characters")
+    database = unquote(parts.path.lstrip("/"))
+    if not database:
+        raise ValueError("missing database name")
+
+    query = {k.lower(): v for k, v in parse_qsl(parts.query, keep_blank_values=False)}
+    rejected = set(query) - _ALLOWED_DSN_PARAMS
+    if rejected:
+        raise ValueError(
+            f"unsupported connection parameter(s): {', '.join(sorted(rejected))}"
+        )
+
+    return ParsedDsn(
+        host=host,
+        port=port,
+        database=database,
+        user=unquote(parts.username or ""),
+        password=unquote(parts.password or ""),
+        query=query,
+    )
+
+
+def _load_connection_string_secret() -> Optional[str]:
+    """Read POSTGRESQL_CONNECTION_STRING from the **encrypted store only**.
+
+    Deliberately not ``get_secret()``: that falls back to the environment, and
+    ``services/api/main.py`` stuffs a hardcoded default connection string into
+    ``os.environ`` for the MCP servers whenever the secret is unset. Reading
+    through the fallback chain would let that default outrank an operator's
+    POSTGRES_* variables — silently pinning them to localhost. The encrypted
+    store is where Settings -> PostgreSQL writes, so it alone expresses intent.
+
+    Local import for the same reason as :func:`_load_platform_db_proxy` —
+    ``database/`` must not hard-depend on the secrets manager at import time.
+    """
+    try:
+        from core.secrets_manager import get_secrets_manager
+    except ImportError:
+        return None
+    try:
+        backend = get_secrets_manager().encrypted_backend
+        return (
+            backend.get("POSTGRESQL_CONNECTION_STRING")
+            if backend.is_available()
+            else None
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Could not read POSTGRESQL_CONNECTION_STRING: %s", e)
+        return None
+
+
+class DatabaseConfig:
+    def __init__(self, *, connection_string: Optional[str] = None):
+        """Initialize from the encrypted-store DSN, else POSTGRES_*.
+
+        DATABASE_URL is not consulted — that is the TypeScript agent's
+        knob, and ``scripts/migrate_schema.py``. Inserting it as a third
+        source would break the ranking this class is built on.
+        """
+        dsn = (
+            connection_string
+            if connection_string is not None
+            else _load_connection_string_secret()
+        )
+        self.source = "env"
+        if dsn:
+            try:
+                self._from_dsn(parse_connection_string(dsn))
+                self.source = "connection_string"
+            except ValueError as e:
+                logger.error(
+                    "Invalid POSTGRESQL_CONNECTION_STRING (%s); using POSTGRES_* env",
+                    e,
+                )
+                self._from_env()
+        else:
+            self._from_env()
+
+        # Connection pool settings
+        settings = get_settings()
+        self.pool_size = settings.db_pool_size
+        self.max_overflow = settings.db_max_overflow
+        self.pool_timeout = settings.db_pool_timeout
+        self.pool_recycle = settings.db_pool_recycle
+        try:
+            self.proxy = _load_platform_db_proxy()
+        except Exception as e:  # noqa: BLE001
+            # A malformed proxy secret must not make retarget unrecoverable.
+            from core.storage.db_proxy import ProxyConfig
+
+            logger.error("Ignoring invalid platform DB proxy config: %s", e)
+            self.proxy = ProxyConfig()
+
+    def _from_env(self) -> None:
+        settings = get_settings()
+        self.host = settings.postgres_host
+        self.port = settings.postgres_port
+        self.database = settings.postgres_db
+        self.user = settings.postgres_user
+        self.password = (
+            get_secret("POSTGRES_PASSWORD") or "deeptempo_secure_password_change_me"
+        )
+        self.ssl_mode = settings.postgres_ssl_mode
+        self.extra_query: Dict[str, str] = {}
+
+    def _from_dsn(self, parsed: ParsedDsn) -> None:
+        self.host = parsed.host
+        self.port = parsed.port
+        self.database = parsed.database
+        self.user = parsed.user
+        self.password = parsed.password
+        self.ssl_mode = parsed.query.get("sslmode") or get_settings().postgres_ssl_mode
+        self.extra_query = {k: v for k, v in parsed.query.items() if k != "sslmode"}
+
+    def get_database_url(
+        self,
+        async_driver: bool = False,
+        *,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+    ) -> str:
+        driver = "postgresql+asyncpg" if async_driver else "postgresql+psycopg2"
+        effective_port = port or self.port
+        # encode every value segment; a raw '?'/'@'/':' surviving in the host or
+        # database name would re-open as libpq params (DSN allowlist bypass)
+        effective_host = quote(host or self.host, safe="")
+        user = quote(self.user, safe="")
+        password = quote(self.password, safe="")
+        database = quote(self.database, safe="")
+        url = (
+            f"{driver}://{user}:{password}"
+            f"@{effective_host}:{effective_port}/{database}"
+        )
+
+        params = dict(getattr(self, "extra_query", {}) or {})
+        if self.ssl_mode != "prefer":
+            params["sslmode"] = self.ssl_mode
+        if params:
+            url += "?" + "&".join(
+                f"{k}={quote(v, safe='')}" for k, v in sorted(params.items())
+            )
+
+        return url
+
+    def identity(self) -> tuple:
+        """Every field that selects a target or its credentials; refresh_if_stale
+        must adopt a change in any of these, not just host/port/database.
+
+        Includes the proxy: _build() rewrites the effective host/port whenever
+        proxy.enabled, so a proxy-only change (SSH tunnel, PgBouncer) still
+        selects a different target and must count as a change to adopt."""
+        return (
+            self.host,
+            self.port,
+            self.database,
+            self.user,
+            self.password,
+            self.ssl_mode,
+            tuple(sorted(self.extra_query.items())),
+            astuple(self.proxy),
+        )
+
+
+@dataclass(frozen=True)
+class RetargetResult:
+    """Outcome of a successful :meth:`DatabaseManager.retarget`."""
+
+    config: "DatabaseConfig"
+    in_flight_at_swap: int = 0
+
+
+# Backend, LLM worker and daemon are separate processes with independent
+# DatabaseManager singletons, so an API-driven retarget only moves one of them.
+# Left alone, the daemon would keep ingesting into the old database while the
+# backend wrote to the new one — silent divergence, the worst failure mode for
+# a SOC tool. The DSN lives in the secrets file, which is file-backed and
+# DB-independent (you cannot read the new database's address from the old
+# database), so its mtime is the cross-process change signal.
+_CONFIG_CHECK_INTERVAL = get_settings().db_config_check_interval
+
+
+def db_config_generation() -> float:
+    """Change-stamp for the DB config: the secrets file's mtime, else 0.0.
+
+    Returns 0.0 when the encrypted backend isn't in use — the dotenv backend
+    has no mtime tracking, so propagation is unavailable there.
+    """
+    try:
+        from core.secrets_manager import get_secrets_manager
+
+        backend = get_secrets_manager().encrypted_backend
+        if not backend.is_available():
+            return 0.0
+        return backend._current_mtime()
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+class DatabaseManager:
+    """Manages database connections and sessions."""
+
+    _instance: Optional["DatabaseManager"] = None
+    _engine: Optional[Engine] = None
+    _session_factory: Optional[sessionmaker] = None
+
+    def __new__(cls):
+        """Singleton pattern to ensure only one database manager exists."""
+        if cls._instance is None:
+            cls._instance = super(DatabaseManager, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        """Initialize the database manager."""
+        if not hasattr(self, "_initialized"):
+            self.config = DatabaseConfig()
+            self._proxy_handle = None
+            self._swap_lock = threading.Lock()  # serializes the engine swap
+            # True while an off-loop retarget thread is running; keeps
+            # refresh_if_stale from spawning more than one (see below).
+            self._retarget_thread_running = False
+            self._initialized = True
+
+    def _build(self, config: DatabaseConfig, echo: bool) -> tuple[Engine, Any]:
+        """Resolve the proxy and create an engine. Touches no instance state.
+
+        Keeping this side-effect free is what lets :meth:`retarget` validate a
+        candidate before disturbing the live engine.
+        """
+        host, port, proxy = config.host, config.port, None
+        if config.proxy.enabled:
+            from core.storage.db_proxy import apply as apply_proxy
+
+            proxy = apply_proxy(host, port, config.proxy)
+            host, port = proxy.host, proxy.port
+            logger.info(
+                "Platform DB proxy active: type=%s effective endpoint %s:%s",
+                config.proxy.proxy_type,
+                host,
+                port,
+            )
+
+        engine = create_engine(
+            config.get_database_url(host=host, port=port),
+            echo=echo,
+            pool_size=config.pool_size,
+            max_overflow=config.max_overflow,
+            pool_timeout=config.pool_timeout,
+            pool_recycle=config.pool_recycle,
+            pool_pre_ping=True,  # Verify connections before using them
+            # Bounded so validating an unreachable host fails in seconds rather
+            # than hanging a worker thread for the OS TCP timeout (~75s).
+            connect_args={"connect_timeout": 5},
+        )
+
+        return engine, proxy
+
+    def retarget(
+        self,
+        config: Optional[DatabaseConfig] = None,
+        *,
+        echo: bool = False,
+        validate: bool = True,
+    ):
+        new_config = config or DatabaseConfig()
+        engine, proxy = self._build(new_config, echo)
+
+        if validate:
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+            except Exception:
+                engine.dispose()
+                if proxy is not None:
+                    proxy.close()
+                raise  # live engine/proxy untouched
+
+        # Serialize the swap so concurrent retargets each dispose the engine they
+        # actually replaced; an unlocked swap leaks the intermediate engine's pool.
+        with self._swap_lock:
+            old_engine, old_proxy = self._engine, self._proxy_handle
+            # Checked-out connections survive dispose() and finish against the OLD
+            # database, so report how many were in flight rather than pretend not.
+            in_flight = old_engine.pool.checkedout() if old_engine is not None else 0
+
+            self.config = new_config
+            self._engine = engine
+            self._proxy_handle = proxy
+            self._session_factory = sessionmaker(
+                bind=engine,
+                expire_on_commit=False,
+                autoflush=True,
+                autocommit=False,
+            )
+
+            if old_engine is not None:
+                old_engine.dispose()
+            if old_proxy is not None and old_proxy is not proxy:
+                try:
+                    old_proxy.close()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Could not close previous DB proxy: %s", e)
+
+            self._config_generation = db_config_generation()
+            self._generation_checked_at = time.monotonic()
+
+        logger.info(
+            "Database target: %s:%s/%s (source=%s)",
+            new_config.host,
+            new_config.port,
+            new_config.database,
+            new_config.source,
+        )
+        return RetargetResult(config=new_config, in_flight_at_swap=in_flight)
+
+    def refresh_if_stale(self) -> bool:
+        """Adopt a DB config another process wrote. Returns True if we swapped.
+
+        Rate-limited to one stat() per ``_CONFIG_CHECK_INTERVAL`` so it can sit
+        on a hot path. Failures are swallowed: a process that cannot reach the
+        new target must keep serving the old one rather than fall over.
+        """
+        if self._engine is None:
+            return False
+        now = time.monotonic()
+        if now - getattr(self, "_generation_checked_at", 0.0) < _CONFIG_CHECK_INTERVAL:
+            return False
+        self._generation_checked_at = now
+
+        generation = db_config_generation()
+        if generation == 0.0 or generation == getattr(self, "_config_generation", 0.0):
+            return False
+
+        old = self.config.identity()
+        try:
+            new_config = DatabaseConfig()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not re-read DB config: %s", e)
+            self._config_generation = generation
+            return False
+        if new_config.identity() == old:
+            self._config_generation = generation  # secrets changed, but not ours
+            return False
+
+        # retarget() validates with a synchronous engine.connect(); on the
+        # asyncio event loop that blocks every coroutine on this worker for up
+        # to the 5s connect timeout. Sync request handlers run in a threadpool
+        # and are fine, but async handlers that call get_db_session() land here
+        # on the loop — so when a loop is running, do the swap on a background
+        # thread and return on the current engine. The change is adopted a beat
+        # later; other refresh_if_stale calls see the pinned generation and the
+        # in-flight guard, so at most one thread runs.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return self._adopt(new_config, generation, old)
+
+        self._config_generation = generation  # pin before spawning
+        if not self._retarget_thread_running:
+            self._retarget_thread_running = True
+
+            def _run() -> None:
+                try:
+                    self._adopt(new_config, generation, old)
+                finally:
+                    self._retarget_thread_running = False
+
+            threading.Thread(target=_run, name="db-retarget", daemon=True).start()
+        return False
+
+    def _adopt(
+        self, new_config: "DatabaseConfig", generation: float, old: tuple
+    ) -> bool:
+        """Retarget onto ``new_config``, pinning the generation on failure so a
+        temporarily-unreachable target isn't retried every interval."""
+        try:
+            self.retarget(new_config, validate=True)
+        except Exception as e:  # noqa: BLE001
+            logger.error(
+                "DB config changed to %s:%s/%s but it is unreachable; "
+                "staying on %s:%s/%s (%s)",
+                new_config.host,
+                new_config.port,
+                new_config.database,
+                old[0],
+                old[1],
+                old[2],
+                e,
+            )
+            self._config_generation = generation  # don't retry every interval
+            return False
+        logger.info("Adopted database config change from another process")
+        return True
+
+    def initialize(self, echo: bool = False, *, force: bool = False):
+        """
+        Initialize the database engine and session factory.
+
+        Args:
+            echo: If True, log all SQL statements
+            force: Rebuild against freshly-read config even if already initialized
+        """
+        if self._engine is not None and not force:
+            logger.warning("Database already initialized")
+            return
+        try:
+            # validate=False: create_engine is lazy today, so cold boot has
+            # always succeeded with postgres down (scripts/init_schema.py and
+            # database_data_service rely on it). Only retarget() validates.
+            self.retarget(None if force else self.config, echo=echo, validate=False)
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+            raise
+
+    def schema_report(self) -> Dict[str, Any]:
+        """Classify the current target against the ORM models.
+
+        Compares **columns**, not just table names: a name-only check calls an
+        outdated schema healthy — every table exists — right until the app hits
+        a column that isn't there and it surfaces as a mystery application bug.
+
+        ``empty`` no AegisSOC tables (safe to provision) / ``ok`` / ``drifted``
+        (tables exist, columns missing — needs scripts/migrate_schema.py, since
+        create_all is checkfirst=True and won't alter them) / ``unknown``.
+        """
+        if self._engine is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+        try:
+            inspector = inspect(self._engine)
+            present = set(inspector.get_table_names())
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Could not inspect target schema: %s", e)
+            return {"state": "unknown", "missing_tables": [], "missing_columns": {}}
+
+        expected = set(Base.metadata.tables)
+        missing_tables = sorted(expected - present)
+        missing_columns: Dict[str, list] = {}
+        for name in sorted(expected & present):
+            try:
+                actual = {c["name"] for c in inspector.get_columns(name)}
+            except Exception:  # noqa: BLE001
+                continue
+            gap = sorted({c.name for c in Base.metadata.tables[name].columns} - actual)
+            if gap:
+                missing_columns[name] = gap
+
+        if not (expected & present):
+            state = "empty"
+        elif missing_columns or missing_tables:
+            state = "drifted"
+        else:
+            state = "ok"
+        return {
+            "state": state,
+            "missing_tables": missing_tables,
+            "missing_columns": missing_columns,
+        }
+
+    def create_tables(self):
+        """Create all database tables."""
+        if self._engine is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+
+        try:
+            Base.metadata.create_all(self._engine)
+            logger.info("Database tables created successfully")
+        except Exception as e:
+            logger.error(f"Failed to create database tables: {e}")
+            raise
+
+    def get_session(self) -> Session:
+        """
+        Get a new database session.
+
+        Returns:
+            SQLAlchemy session
+        """
+        if self._session_factory is None:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+
+        return self._session_factory()
+
+    @contextmanager
+    def session_scope(self) -> Generator[Session, None, None]:
+        """
+        Provide a transactional scope around a series of operations.
+
+        Usage:
+            with db_manager.session_scope() as session:
+                # Use session here
+                session.add(obj)
+                # Automatically commits on success, rolls back on exception
+
+        Yields:
+            SQLAlchemy session
+        """
+        session = self.get_session()
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Database transaction failed: {e}")
+            raise
+        finally:
+            session.close()
+
+    def close(self):
+        """Close the database connection pool."""
+        if self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
+            self._session_factory = None
+            logger.info("Database connection pool closed")
+        if self._proxy_handle is not None:
+            try:
+                self._proxy_handle.close()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Failed to close DB proxy handle cleanly: %s", exc)
+            self._proxy_handle = None
+
+    def health_check(self) -> bool:
+        """
+        Check if the database is accessible.
+
+        Returns:
+            True if database is accessible, False otherwise
+        """
+        try:
+            with self.session_scope() as session:
+                session.execute(text("SELECT 1"))
+            return True
+        except Exception as e:
+            logger.error(f"Database health check failed: {e}")
+            return False
+
+    @property
+    def engine(self) -> Optional[Engine]:
+        """Get the database engine."""
+        return self._engine
+
+
+# Global database manager instance
+_db_manager: Optional[DatabaseManager] = None
+
+
+def get_db_manager() -> DatabaseManager:
+    """
+    Get the global database manager instance.
+
+    Returns:
+        DatabaseManager instance
+    """
+    global _db_manager
+    if _db_manager is None:
+        _db_manager = DatabaseManager()
+    return _db_manager
+
+
+def get_db_session() -> Session:
+    """
+    Get a new database session.
+
+    Returns:
+        SQLAlchemy session
+    """
+    db_manager = get_db_manager()
+    # The session entry point every process shares, so this is where the LLM
+    # worker and daemon notice a retarget the backend performed. Rate-limited.
+    db_manager.refresh_if_stale()
+    return db_manager.get_session()
+
+
+def get_session() -> Session:
+    """
+    Get a database session (convenience function for imports).
+
+    This is a convenience wrapper around get_db_session() for backward compatibility.
+
+    Returns:
+        SQLAlchemy session
+    """
+    return get_db_session()
+
+
+class SchemaDriftError(RuntimeError):
+    """The deployed schema does not match what the ORM expects.
+
+    Raised only when ``DB_STRICT_SCHEMA`` is set; the default is to report the
+    drift loudly and keep serving.
+    """
+
+
+# States that mean the schema cannot serve the models. ``empty`` counts only
+# when the caller has just run create_all: an empty schema at that point means
+# create_all did nothing, which is worse than a missing column, not better.
+_UNSERVICEABLE = {"drifted", "empty"}
+
+# How long a non-healthy verdict is reused before re-inspecting. An `ok` is
+# final and cached for good; anything else is provisional — the operator may be
+# part-way through a migration, or the inspection may not have reached the
+# database — so it is retried, but not on every call: init_database() runs on
+# every DatabaseDataService construction, including inside the health handler,
+# and schema_report() walks every mapped table.
+_SCHEMA_RECHECK_SECONDS = 30.0
+
+_schema_drift_report: Optional[Dict[str, Any]] = None
+_schema_drift_report_at = 0.0
+# Separate from the report so the ERROR is emitted once per process while the
+# strict-mode refusal still fires on every call.
+_schema_drift_logged = False
+# Serializes inspect-and-record. Without it two threads arriving together each
+# walk every mapped table and each log the same ERROR.
+_schema_drift_lock = threading.Lock()
+
+
+def reset_schema_drift_check() -> None:
+    """Forget the cached verdict so the next check re-inspects. For tests."""
+    global _schema_drift_report, _schema_drift_report_at, _schema_drift_logged
+    with _schema_drift_lock:
+        _schema_drift_report = None
+        _schema_drift_report_at = 0.0
+        _schema_drift_logged = False
+
+
+def get_schema_drift_report() -> Optional[Dict[str, Any]]:
+    """The cached startup verdict, or None if no check has succeeded yet.
+
+    A plain dict read: callers on the event loop (the health endpoint) must
+    never trigger an inspection, which walks every mapped table.
+    """
+    return _schema_drift_report
+
+
+def check_schema_drift(
+    db_manager: Optional["DatabaseManager"] = None,
+    *,
+    provisioned: bool = True,
+) -> Optional[Dict[str, Any]]:
+    """Report a schema that is a release behind the models, at startup.
+
+    ``create_all`` is ``checkfirst=True``: it creates missing tables and never
+    alters existing ones, and it returns successfully either way. A column added
+    to a model therefore reaches every existing deployment as silent drift, and
+    surfaces much later as ``UndefinedColumn`` on a column that is plainly
+    present in ``models.py``. ``schema_report()`` has always been able to spot
+    this; nothing consulted it outside an on-demand endpoint. See #562.
+
+    The comparison is by column **name**. A changed type, a new ``NOT NULL`` or
+    a changed foreign key is drift this cannot see, so ``state: ok`` means "every
+    column the models name exists", not "the schema matches the models".
+
+    Default behaviour is to log at ERROR and keep serving — taking a running SOC
+    offline over a missing nullable column is worse than the drift. Set
+    ``DB_STRICT_SCHEMA=true`` (CI, fresh deploys) to make it fatal instead.
+
+    Args:
+        db_manager: the manager to inspect; the process-wide one by default.
+        provisioned: True when the caller has just run create_all, which makes
+            an ``empty`` schema a failure rather than a database awaiting
+            provisioning.
+
+    Returns:
+        The report, or None if none could be produced yet. A healthy verdict is
+        memoised for good and an unhealthy one for ``_SCHEMA_RECHECK_SECONDS``;
+        the strict-mode refusal is not memoised at all.
+    """
+    global _schema_drift_report, _schema_drift_report_at, _schema_drift_logged
+
+    with _schema_drift_lock:
+        report = _schema_drift_report
+        now = time.monotonic()
+        # An "ok" is final: create_all is the only thing that reshapes the
+        # schema under us, and it cannot remove a column. Anything else is
+        # provisional. A cached "empty" is additionally void the moment a
+        # caller has run create_all, which every DatabaseDataService
+        # construction does — the tables it was recorded against may exist now.
+        if report is None or (
+            report["state"] != "ok"
+            and (
+                now - _schema_drift_report_at >= _SCHEMA_RECHECK_SECONDS
+                or (report["state"] == "empty" and provisioned)
+            )
+        ):
+            manager = db_manager if db_manager is not None else get_db_manager()
+            try:
+                fresh = manager.schema_report()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Could not check for schema drift: %s", e)
+                fresh = None
+            # "unknown" is schema_report() reporting that it could not inspect,
+            # not a verdict about the schema. Recording it would let one blip
+            # while the database comes up disable this check — strict mode
+            # included — for the life of the process, defeating the reconnect
+            # retry in DatabaseDataService._db_available.
+            if fresh is not None and fresh["state"] != "unknown":
+                _schema_drift_report = fresh
+                _schema_drift_report_at = now
+                report = fresh
+            elif report is None:
+                return None
+
+        state = report["state"]
+        if state not in _UNSERVICEABLE or (state == "empty" and not provisioned):
+            return report
+
+        missing = [
+            f"{table}.{column}"
+            for table, columns in sorted(report["missing_columns"].items())
+            for column in columns
+        ]
+        detail = ", ".join(missing) or "none"
+        tables = ", ".join(report["missing_tables"])
+
+        if state == "empty":
+            summary = (
+                "Database has no AegisSOC tables after create_all, so nothing "
+                "provisioned it. Check the database user can CREATE, and that "
+                "the target is the database you meant."
+            )
+        else:
+            summary = (
+                f"Database schema is behind the models: missing columns: "
+                f"{detail}. create_all cannot add them (checkfirst=True never "
+                "alters an existing table), so reads of these tables will fail "
+                "with UndefinedColumn. Run scripts/migrate_schema.py against "
+                "this database, and check it has a step for each column above — "
+                "it only covers columns registered by hand."
+            )
+
+        if not _schema_drift_logged:
+            logger.error("%s", summary)
+            if tables:
+                logger.error("Database schema is also missing tables: %s", tables)
+            _schema_drift_logged = True
+
+    if get_settings().db_strict_schema:
+        raise SchemaDriftError(
+            f"Refusing to start with an unusable schema (DB_STRICT_SCHEMA is "
+            f"set). {summary}" + (f" Missing tables: {tables}." if tables else "")
+        )
+
+    return report
+
+
+def init_database(echo: bool = False, create_tables: bool = True):
+    """
+    Initialize the database.
+
+    Args:
+        echo: If True, log all SQL statements
+        create_tables: If True, create all tables
+
+    Raises:
+        SchemaDriftError: if the schema cannot serve the models and
+            ``DB_STRICT_SCHEMA`` is set.
+    """
+    db_manager = get_db_manager()
+    db_manager.initialize(echo=echo)
+
+    if create_tables:
+        db_manager.create_tables()
+
+    # After create_all, so we report what the schema actually ended up as.
+    check_schema_drift(db_manager, provisioned=create_tables)

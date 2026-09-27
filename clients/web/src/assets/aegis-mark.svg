@@ -1,0 +1,23 @@
+<svg width="2000" height="2000" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <linearGradient id="aegis-shield-grad" x1="10%" y1="0%" x2="90%" y2="100%">
+    <stop offset="0%" stopColor="#00F0FF" />
+    <stop offset="50%" stopColor="#00A2FF" />
+    <stop offset="100%" stopColor="#0051FF" />
+  </linearGradient>
+  <linearGradient id="aegis-inner-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%" stopColor="#00F5FF" />
+    <stop offset="100%" stopColor="#0088FF" />
+  </linearGradient>
+  <linearGradient id="aegis-glow" x1="50%" y1="0%" x2="50%" y2="100%">
+    <stop offset="0%" stopColor="#00F0FF" stopOpacity="0.25" />
+    <stop offset="100%" stopColor="#0051FF" stopOpacity="0" />
+  </linearGradient>
+</defs>
+<path d="M50 4L88 19V54C88 75.5 50 96 50 96C50 96 12 75.5 12 54V19L50 4Z" stroke="url(#aegis-shield-grad)" stroke-width="5" stroke-linejoin="round" fill="url(#aegis-glow)" />
+<path d="M22 24L50 13L78 24" stroke="url(#aegis-inner-grad)" stroke-width="2.5" stroke-linecap="round" opacity="0.8" />
+<path d="M18 52C18 69 44 86 50 89C56 86 82 69 82 52" stroke="url(#aegis-inner-grad)" stroke-width="2" stroke-linecap="round" opacity="0.6" />
+<path d="M50 22L72 68H60L50 46L40 68H28L50 22Z" fill="url(#aegis-inner-grad)" />
+<path d="M37 57H63L65 62H35L37 57Z" fill="#00F0FF" />
+<polygon points="50,38 55,45 50,52 45,45" fill="#FFFFFF" />
+</svg>

@@ -1,0 +1,483 @@
+import json
+import logging
+import os
+import sys
+from functools import lru_cache
+from pathlib import Path
+from typing import Annotated, Any, List, Optional
+
+from pydantic import AliasChoices, Field, ValidationError, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+_AEGIS_DIRNAME = ".aegis"
+_AEGIS_DIRNAME = ".aegis"
+_LEGACY_DIRNAME = ".deeptempo"
+
+REQUEST_TIMEOUT = 30
+STREAM_TIMEOUT = 120
+
+DEFAULT_REDIS_URL = "redis://localhost:6379/0"
+DEFAULT_SANDBOX_FILE_TYPES = "exe,dll,doc,docx,xls,xlsx,pdf,js,vbs,ps1,bat,msi"
+
+
+def _safe_home() -> Path:
+    """Return the user's home directory, or a safe writable fallback if home is root (/)." """
+    try:
+        home = Path.home()
+    except Exception:
+        home = Path("/")
+    if home == Path("/") or str(home) == "/":
+        # When running in a container where HOME=/ or unset, Path.home() is Path("/").
+        # Root (/) is never a valid user home directory and writing to /.aegis will fail
+        # with PermissionError (Errno 13).
+        if Path("/home/aegis").is_dir():
+            return Path("/home/aegis")
+        if Path("/home/aegis").is_dir():
+            return Path("/home/aegis")
+        return Path("/tmp")
+    return home
+
+
+# The State Directory: the one per-install directory holding what the metadata
+# DB does not. AEGIS_DIR / AEGIS_DIR if exported, else ~/.aegis (with ~/.aegis fallback).
+# A write that cannot happen raises; callers that want to degrade catch it themselves.
+#
+# Reads seamlessly fall back to ~/.aegis and ~/.deeptempo copies; writes
+# target the State Directory (~/.aegis).
+def aegis_path(*parts: str, write: bool = False) -> Path:
+    override = os.environ.get("AEGIS_DIR") or os.environ.get(
+        "AEGIS_DIR"
+    )  # noqa: ENV001
+    if override:
+        target = aegis_fallback = legacy = Path(override)
+    else:
+        home = _safe_home()
+        target = home / _AEGIS_DIRNAME
+        aegis_fallback = home / _AEGIS_DIRNAME
+        legacy = home / _LEGACY_DIRNAME
+    if parts:
+        target = target.joinpath(*parts)
+        aegis_fallback = aegis_fallback.joinpath(*parts)
+        legacy = legacy.joinpath(*parts)
+    if write:
+        (target.parent if parts else target).mkdir(parents=True, exist_ok=True)
+        return target
+    # Seamless backward-compatibility fallback if not yet migrated to ~/.aegis
+    if parts and not target.exists():
+        if aegis_fallback.exists():
+            return aegis_fallback
+        if legacy.exists():
+            return legacy
+    elif not target.exists() and aegis_fallback.exists():
+        return aegis_fallback
+    return target
+
+
+# Alias for full backward compatibility across all modules
+aegis_path = aegis_path
+
+
+def state_dir_status() -> dict:
+    """Where the State Directory resolved to, and whether it can be written.
+
+    Read-only: never creates the directory, so a health probe cannot be the
+    thing that brings the credential store into existence. A directory that does
+    not exist yet is probed at its nearest existing ancestor, which answers the
+    question that matters — whether the first save will land.
+    """
+    path = aegis_path()
+    status: dict = {"path": str(path), "exists": path.is_dir()}
+    target = path
+    while not target.is_dir() and target != target.parent:
+        target = target.parent
+    probe = target / f".aegis-write-probe.{os.getpid()}"
+    try:
+        probe.touch()
+        return {**status, "writable": True}
+    except OSError as exc:
+        return {**status, "writable": False, "error": str(exc)}
+    finally:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _settings_env_file() -> Optional[Path]:
+    # Tests set this before collection so import-time get_settings() captures
+    # do not read a developer's root .env. os.environ, not Settings: resolved
+    # while Settings is being defined, like AEGIS_DIR / AEGIS_DIR.
+    if os.environ.get("AEGIS_DISABLE_DOTENV") or os.environ.get(
+        "AEGIS_DISABLE_DOTENV"
+    ):  # noqa: ENV001 - pre-Settings bootstrap
+        return None
+    return REPO_ROOT / ".env"
+
+
+class Settings(BaseSettings):
+    # Anchored to the repo so the same .env loads regardless of working directory.
+    # Real env vars still win, keeping container and Helm injection authoritative.
+    model_config = SettingsConfigDict(
+        env_file=_settings_env_file(),
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # Runtime
+    dev_mode: bool = False
+    testing: bool = False
+    environment: str = "development"
+    release_version: str = "unknown"
+    demo_mode: Optional[bool] = None
+    autostart_services: Optional[str] = None
+    max_upload_size_mb: int = 500
+    aegis_context_path: str = Field(
+        default="",
+        validation_alias=AliasChoices("aegis_context_path", "aegis_context_path"),
+    )
+    aegis_frontend_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("aegis_frontend_url", "aegis_frontend_url"),
+    )
+    # Empty means the repo-root INTENT.md, as core.platform.autostart_config does.
+    aegis_intent_path: str = Field(
+        default="",
+        validation_alias=AliasChoices("aegis_intent_path", "aegis_intent_path"),
+    )
+
+    # Database. DATABASE_URL is not a field: Settings.extra is ignore so the
+    # agent and scripts/migrate_schema.py can keep it in the environment.
+    # Python sessions go through DatabaseConfig (encrypted DSN / POSTGRES_*).
+    postgresql_connection_string: Optional[str] = None
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "deeptempo_soc"
+    postgres_user: str = "deeptempo"
+    postgres_ssl_mode: str = "prefer"
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
+    db_pool_timeout: int = 30
+    db_pool_recycle: int = 3600
+    db_config_check_interval: float = 5.0
+    # Refuse to start when the schema cannot serve the models. Off by
+    # default: a missing nullable column should not take a running SOC
+    # offline. See #562.
+    db_strict_schema: bool = False
+
+    # Redis / queue. None means "no Redis configured" — the rate limiter falls back
+    # to in-memory on None, so a default here would silently change its behavior.
+    redis_url: Optional[str] = None
+    llm_max_concurrent: int = 5
+
+    # HTTP security
+    aegis_cors_origins: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("aegis_cors_origins", "aegis_cors_origins"),
+    )
+    aegis_csp_policy: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("aegis_csp_policy", "aegis_csp_policy"),
+    )
+    aegis_csp_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("aegis_csp_enabled", "aegis_csp_enabled"),
+    )
+    aegis_hsts_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("aegis_hsts_enabled", "aegis_hsts_enabled"),
+    )
+    aegis_hsts_max_age: int = Field(
+        default=31536000,
+        validation_alias=AliasChoices("aegis_hsts_max_age", "aegis_hsts_max_age"),
+    )
+    aegis_frame_options_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "aegis_frame_options_enabled", "aegis_frame_options_enabled"
+        ),
+    )
+    aegis_content_type_options_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "aegis_content_type_options_enabled", "aegis_content_type_options_enabled"
+        ),
+    )
+    aegis_referrer_policy_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "aegis_referrer_policy_enabled", "aegis_referrer_policy_enabled"
+        ),
+    )
+    aegis_csrf_enabled: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("aegis_csrf_enabled", "aegis_csrf_enabled"),
+    )
+    aegis_csrf_report_only: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "aegis_csrf_report_only", "aegis_csrf_report_only"
+        ),
+    )
+    aegis_csrf_exempt_paths: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "aegis_csrf_exempt_paths", "aegis_csrf_exempt_paths"
+        ),
+    )
+    aegis_cookie_secure: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("aegis_cookie_secure", "aegis_cookie_secure"),
+    )
+    aegis_cookie_samesite: str = Field(
+        default="strict",
+        validation_alias=AliasChoices("aegis_cookie_samesite", "aegis_cookie_samesite"),
+    )
+
+    # Auth
+    jwt_access_expiration_minutes: int = 30
+    jwt_refresh_expiration_days: int = 7
+    auth_lockout_threshold: int = 5
+    auth_lockout_duration_minutes: int = 15
+    auth_password_history_limit: int = 5
+    auth_min_password_length: int = 12
+    # bcrypt raises above 72 bytes rather than truncating, so a higher ceiling
+    # here means a long password validates and then 500s at hash time.
+    auth_max_password_bytes: int = 72
+    auth_min_zxcvbn_score: int = 3
+    password_reset_ttl_seconds: int = 3600
+    revocation_fail_open: bool = False
+
+    # LLM / gateway
+    # Host-run default: `bifrost` resolves only inside the compose network, and
+    # compose, Helm and start.sh all inject the right hostname explicitly.
+    bifrost_url: str = "http://localhost:8080"
+    # Where the agent worker listens. Two calls go this way rather than through
+    # the queue: a chat turn, which is synchronous, and a run's projection.
+    agent_url: str = "http://localhost:6989"
+    anthropic_base_url: str = ""
+    ollama_url: str = "http://localhost:11434"
+    default_model: str = "claude-sonnet-4-6"
+    ollama_extra_tool_models: str = ""
+    model_catalog_refresh_interval_s: int = 300
+    prompt_injection_block: bool = False
+    mcp_auto_connect_on_startup: Optional[bool] = None
+    llm_budget_unlimited: bool = False
+    extension_connector_allowlist: Annotated[List[str], NoDecode] = []
+
+    # Email
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: Optional[str] = None
+    smtp_username: Optional[str] = None
+    smtp_from: str = Field(
+        default="noreply@aegissoc.local",
+        validation_alias=AliasChoices("smtp_from", "aegis_smtp_from"),
+    )
+    smtp_tls: bool = True
+    aegis_email_backend: str = Field(
+        default="console",
+        validation_alias=AliasChoices("aegis_email_backend", "aegis_email_backend"),
+    )
+
+    # Observability
+    sentry_dsn: str = ""
+    aegis_otel_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("aegis_otel_enabled", "aegis_otel_enabled"),
+    )
+    aegis_otel_record_llm_content: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "aegis_otel_record_llm_content", "aegis_otel_record_llm_content"
+        ),
+    )
+    aegis_otel_record_ioc_values: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "aegis_otel_record_ioc_values", "aegis_otel_record_ioc_values"
+        ),
+    )
+    otel_exporter_otlp_endpoint: str = "http://localhost:4317"
+
+    # Daemon
+    daemon_log_level: str = "INFO"
+    daemon_splunk_poll_interval: int = 300
+    daemon_crowdstrike_poll_interval: int = 60
+    daemon_webhook_enabled: bool = True
+    daemon_webhook_port: int = 8081
+    daemon_auto_triage: bool = True
+    daemon_auto_enrich: bool = True
+    daemon_batch_size: int = 10
+    daemon_enrich_max_inflight: int = 50
+    daemon_enrich_backfill: bool = True
+    daemon_enrich_backfill_interval: int = 300
+    daemon_enrich_backfill_batch: int = 50
+    daemon_enrich_backfill_max_age_hours: int = 168
+    daemon_auto_response: bool = True
+    daemon_confidence_threshold: float = 0.90
+    # The rest of the confidence band (#916); see core.response.config.
+    daemon_review_threshold: float = 0.85
+    daemon_monitor_threshold: float = 0.70
+    daemon_critical_action_floor: float = 0.70
+    daemon_high_action_floor: float = 0.80
+    daemon_force_approval: bool = False
+    daemon_dry_run: bool = False
+    daemon_escalation_enabled: bool = True
+    daemon_escalate_severities: Annotated[List[str], NoDecode] = ["critical", "high"]
+    # Call sites disagree on the default (config.from_env on, orchestrator off), so
+    # this stays tri-state and each site supplies its own fallback.
+    daemon_slack_enabled: Optional[bool] = None
+    daemon_slack_channel: str = "#soc-alerts"
+    daemon_pagerduty_enabled: bool = False
+    daemon_threat_hunt_enabled: bool = True
+    daemon_threat_hunt_interval: int = 86400
+    # Known-answer probes (#923): an hourly sweep, injected once a day by id.
+    daemon_probes_enabled: bool = True
+    daemon_probe_interval: int = 3600
+    daemon_cleanup_retention_days: int = 90
+    # Separate from cleanup_retention_days on purpose: that governs bulk data
+    # retention and wants a long horizon, while an unanswered containment
+    # proposal goes stale in days (#675).
+    daemon_approval_expiry_days: int = 7
+    daemon_metrics_enabled: bool = True
+    daemon_metrics_port: int = 9090
+    daemon_health_host: str = "localhost"
+    daemon_health_port: int = 9091
+
+    # Orchestrator
+    orchestrator_enabled: bool = False
+    orchestrator_loop_interval: int = 60
+    orchestrator_max_agents: int = 3
+    orchestrator_max_iterations: int = 50
+    orchestrator_max_cost: float = 5.0
+    orchestrator_max_hourly_cost: float = 20.0
+    orchestrator_max_runtime: int = 3600
+    orchestrator_stale_threshold: int = 300
+    orchestrator_workdir: str = "data/investigations"
+    orchestrator_dry_run: bool = False
+
+    # Kafka ingestion. Credentials go through the secrets store, not here.
+    kafka_enabled: bool = False
+    kafka_bootstrap_servers: str = "localhost:9092"
+    kafka_consumer_group: str = "aegis-soc"
+    kafka_topics: Annotated[List[str], NoDecode] = []
+    kafka_auto_offset_reset: str = "latest"
+    kafka_max_poll_records: int = 500
+    kafka_session_timeout_ms: int = 30000
+    kafka_security_protocol: str = "PLAINTEXT"
+    kafka_sasl_mechanism: Optional[str] = None
+    kafka_ssl_ca_location: Optional[str] = None
+
+    # Ingestion / webhooks
+    darktrace_enabled: bool = False
+    darktrace_url: str = ""
+    darktrace_max_body_kb: int = 1024
+    cloudy_ingestion_enabled: bool = False
+    cloudy_webhook_max_body_kb: int = 1024
+    threat_feed_poll_interval: int = 900
+
+    # Sandbox
+    sandbox_auto_submit: bool = False
+    sandbox_poll_interval: int = 60
+    sandbox_allowed_file_types: str = DEFAULT_SANDBOX_FILE_TYPES
+    sandbox_max_file_size_mb: int = 100
+    sandbox_analysis_timeout: int = 300
+    joe_sandbox_enabled: bool = False
+    joe_sandbox_url: str = "https://jbxcloud.joesecurity.org/api"
+    cape_sandbox_enabled: bool = False
+    cape_sandbox_url: str = ""
+    hybrid_analysis_enabled: bool = False
+    anyrun_enabled: bool = False
+
+    @field_validator(
+        "extension_connector_allowlist",
+        "daemon_escalate_severities",
+        "kafka_topics",
+        mode="before",
+    )
+    @classmethod
+    def _split_csv(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return [p.strip() for p in v.split(",") if p.strip()]
+        return v
+
+    @field_validator(
+        "demo_mode",
+        "daemon_slack_enabled",
+        "mcp_auto_connect_on_startup",
+        mode="before",
+    )
+    # Tri-state: blank means "no opinion, use the call site's fallback".
+    @classmethod
+    def _blank_is_unset(cls, v: Any) -> Any:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    # Note: aegis_* settings are plain fields above and read directly as
+    # settings.aegis_<name>. (Earlier back-compat property aliases were removed:
+    # after the rebrand each alias collided with its own field name and shadowed
+    # it, so Settings() saw a property object where a value belonged.)
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()
+
+
+def _format_validation_error(exc: ValidationError) -> str:
+    details = []
+    for error in exc.errors():
+        loc = ".".join(str(part) for part in error.get("loc", ()))
+        msg = error.get("msg", "invalid value")
+        details.append(f"{loc}: {msg}" if loc else msg)
+    return "; ".join(details) or "invalid settings"
+
+
+def validate_settings_or_exit() -> Settings:
+    try:
+        return get_settings()
+    except ValidationError as exc:
+        print(f"configuration error: {_format_validation_error(exc)}", file=sys.stderr)
+        sys.exit(os.EX_CONFIG)
+
+
+def is_demo_mode() -> bool:
+    enabled = get_settings().demo_mode
+    if enabled is not None:
+        return enabled
+    return get_general_config("demo_mode", False)
+
+
+def _load_json_config(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        logger.error(f"Config load error {path}: {e}")
+        return {}
+
+
+def get_integration_config(integration_id: str) -> dict[str, Any]:
+    data = _load_json_config(aegis_path("integrations_config.json"))
+    if integration_id not in data.get("enabled_integrations", []):
+        return {}
+    return data.get("integrations", {}).get(integration_id, {})
+
+
+def is_integration_enabled(integration_id: str) -> bool:
+    data = _load_json_config(aegis_path("integrations_config.json"))
+    return integration_id in data.get("enabled_integrations", [])
+
+
+def get_general_config(key: str, default: Any = None) -> Any:
+    data = _load_json_config(aegis_path("general_config.json"))
+    return data.get(key, default)

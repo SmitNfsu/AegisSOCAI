@@ -1,0 +1,157 @@
+"""DB helpers for federation_sources rows + the global federation toggle.
+
+Kept in a single module so both the daemon runner and the backend API can
+use the same code path (no re-implementation drift).
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from core.exceptions import default_on_error
+from core.time import utcnow
+
+logger = logging.getLogger(__name__)
+
+GLOBAL_KEY = "federation.settings"
+
+
+# ---------------------------------------------------------------------------
+# Global toggle (system_config.federation.settings)
+# ---------------------------------------------------------------------------
+
+
+def get_global_settings() -> Dict[str, Any]:
+    """Return the federation.settings JSON, defaulting to ``{"enabled": False}``."""
+    try:
+        from core.storage.config_service import get_config_service
+
+        cfg = get_config_service().get_system_config(GLOBAL_KEY)
+        if isinstance(cfg, dict):
+            return cfg
+    except Exception as e:
+        logger.debug("federation.settings read failed: %s", e)
+    return {"enabled": False}
+
+
+def set_global_settings(value: Dict[str, Any], updated_by: str = "api") -> None:
+    """Write ``federation.settings`` (read-modify-write so we don't drop fields)."""
+    try:
+        from core.storage.config_service import get_config_service
+
+        current = get_global_settings()
+        current.update(value)
+        get_config_service(user_id=updated_by).set_system_config(
+            key=GLOBAL_KEY,
+            value=current,
+            description="Federated monitoring global on/off",
+            config_type="federation",
+        )
+    except Exception as e:
+        logger.error("federation.settings write failed: %s", e)
+        raise
+
+
+def is_globally_enabled() -> bool:
+    return bool(get_global_settings().get("enabled", False))
+
+
+# ---------------------------------------------------------------------------
+# Per-source row helpers (federation_sources table)
+# ---------------------------------------------------------------------------
+
+
+@default_on_error(list, level="debug")
+def list_sources() -> List[Dict[str, Any]]:
+    """All federation_sources rows as dicts."""
+    from core.storage.connection import get_db_manager
+    from core.storage.models import FederationSource
+    from core.storage.schemas import FederationSourceSchema
+
+    with get_db_manager().session_scope() as session:
+        rows = session.query(FederationSource).all()
+        return FederationSourceSchema.dump_many(rows)
+
+
+@default_on_error(None, level="debug")
+def get_source(source_id: str) -> Optional[Dict[str, Any]]:
+    from core.storage.connection import get_db_manager
+    from core.storage.models import FederationSource
+    from core.storage.schemas import FederationSourceSchema
+
+    with get_db_manager().session_scope() as session:
+        row = session.get(FederationSource, source_id)
+        return FederationSourceSchema.dump(row) if row else None
+
+
+@default_on_error(None, level="warning")
+def upsert_source(source_id: str, defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Ensure a row exists; if missing, insert with ``defaults``.
+
+    Returns the resulting row as dict. Used by the auto-seed step on daemon
+    boot — see :func:`core.federation.seed.seed_federation_sources`.
+    """
+    from core.storage.connection import get_db_manager
+    from core.storage.models import FederationSource
+    from core.storage.schemas import FederationSourceSchema
+
+    with get_db_manager().session_scope() as session:
+        row = session.get(FederationSource, source_id)
+        if row is None:
+            row = FederationSource(source_id=source_id, **defaults)
+            session.add(row)
+            session.flush()
+        return FederationSourceSchema.dump(row)
+
+
+@default_on_error(None, level="warning")
+def update_source(source_id: str, fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Patch arbitrary columns on a source row. Caller validates fields."""
+    from core.storage.connection import get_db_manager
+    from core.storage.models import FederationSource
+    from core.storage.schemas import FederationSourceSchema
+
+    with get_db_manager().session_scope() as session:
+        row = session.get(FederationSource, source_id)
+        if row is None:
+            return None
+        for k, v in fields.items():
+            if hasattr(row, k):
+                setattr(row, k, v)
+        session.flush()
+        return FederationSourceSchema.dump(row)
+
+
+def record_success(
+    source_id: str, *, cursor: Dict[str, Any], when: Optional[datetime] = None
+) -> None:
+    when = when or utcnow()
+    update_source(
+        source_id,
+        {
+            "last_poll_at": when,
+            "last_success_at": when,
+            "last_error": None,
+            "consecutive_errors": 0,
+            "cursor": cursor or {},
+        },
+    )
+
+
+def record_failure(source_id: str, error: str) -> None:
+    """Increment consecutive_errors. We never auto-disable (per design)."""
+    try:
+        from core.storage.connection import get_db_manager
+        from core.storage.models import FederationSource
+
+        with get_db_manager().session_scope() as session:
+            row = session.get(FederationSource, source_id)
+            if row is None:
+                return
+            row.last_poll_at = utcnow()
+            row.last_error = (error or "")[:2000]
+            row.consecutive_errors = (row.consecutive_errors or 0) + 1
+    except Exception as e:
+        logger.debug("record_failure(%s) failed: %s", source_id, e)

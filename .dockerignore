@@ -1,0 +1,104 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.tox/
+.hypothesis/
+tests/
+*.test
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Documentation
+*.md
+docs/
+archive/
+*.txt
+LICENSE
+# requirements.txt is needed by Dockerfile.backend + Dockerfile.daemon;
+# the wildcard above would otherwise exclude it.
+!requirements.txt
+
+# Logs
+logs/
+*.log
+*.pid
+
+# Frontend (not needed in backend image)
+clients/web/node_modules/
+clients/web/build/
+clients/web/dist/
+
+# Agent layer. The Python images COPY services/ wholesale, so without these an
+# installed node_modules would land in aegis-backend and aegis-daemon. The
+# agent image installs its own deps and compiles inside the build, so a host
+# tree here would only make that build unreproducible.
+services/agent/node_modules/
+services/agent/dist/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Evidence files
+evidence/
+
+# Large data files
+*.csv
+*.json.gz
+*.parquet
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+

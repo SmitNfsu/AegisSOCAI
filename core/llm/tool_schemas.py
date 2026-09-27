@@ -1,0 +1,701 @@
+"""
+Claude API Tool Schemas
+Defines all tools available to Claude via function calling
+"""
+
+# The recall tool's signature is declared with the rest of the recall contract
+# (#729) rather than transcribed here: a schema that drifts from the handler's
+# arguments fails as "no history", which reads as an entity nobody has looked at.
+from core.memory.recall_contract import RECALL_PARAMETERS, RECALL_TOOL
+
+# Security-Detections Tools (Core functionality)
+SECURITY_DETECTION_TOOLS = [
+    {
+        "name": "analyze_coverage",
+        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL). Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "techniques": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of MITRE technique IDs (e.g., ['T1059.001', 'T1071.001']). Catalog path; omit when reporting a run.",
+                },
+                "run_id": {
+                    "type": "string",
+                    "description": "Agent run id. Asks the agent layer for journaled execute traces, then reconstructs. Report path, not catalog counts.",
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Action-trace steps (same shape as reconstruct_run). Report path without a ledger.",
+                },
+            },
+        },
+    },
+    {
+        "name": "search_detections",
+        "description": "Search across 7,200+ detection rules (Sigma, Splunk, Elastic, KQL) using keywords. Returns matching detection rules with metadata. Use this to find relevant detections for specific attack patterns or tools.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query - keywords or phrases (e.g., 'powershell base64', 'lateral movement', 'mimikatz')",
+                },
+                "source_type": {
+                    "type": "string",
+                    "enum": ["sigma", "splunk", "elastic", "kql"],
+                    "description": "Optional: Filter by detection format. Omit to search all formats.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return (default: 20)",
+                    "default": 20,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "identify_gaps",
+        "description": "Identify detection gaps for a given context such as threat actor, attack type, or campaign. Analyzes which MITRE techniques have insufficient detection coverage. Use this for gap analysis and prioritization.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "context": {
+                    "type": "string",
+                    "description": "Context for gap analysis (e.g., 'ransomware', 'APT29', 'initial access', 'lateral movement')",
+                }
+            },
+            "required": ["context"],
+        },
+    },
+    {
+        "name": "get_coverage_stats",
+        "description": "Get overall detection coverage statistics including total detections, techniques covered, and breakdown by source format. Use this for high-level coverage overview.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_type": {
+                    "type": "string",
+                    "enum": ["sigma", "splunk", "elastic", "kql"],
+                    "description": "Optional: Get stats for specific source format only",
+                }
+            },
+        },
+    },
+    {
+        "name": "get_detection_count",
+        "description": "Get count of detection rules, optionally filtered by source format.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_type": {
+                    "type": "string",
+                    "enum": ["sigma", "splunk", "elastic", "kql"],
+                    "description": "Optional: Count for specific source format",
+                }
+            },
+        },
+    },
+    {
+        "name": "lint_detections",
+        "description": "Lint Sigma detection rules for match keys tied to a specific IP, hostname, user, or subnet. Returns rewrite guidance to make the rule behavioural. Pass rule_yaml for one rule or source_path to walk .yml files under an existing source. Does not block importing community rule sources.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "rule_yaml": {
+                    "type": "string",
+                    "description": "Sigma rule YAML to lint. Pass this or source_path, not both.",
+                },
+                "source_path": {
+                    "type": "string",
+                    "description": "Directory of Sigma .yml files (or a single .yml file) to lint.",
+                },
+            },
+        },
+    },
+    {
+        "name": "reconstruct_run",
+        "description": "Reconstruct a red-run action trace into per-step detection verdicts. Correlates each step to ingested Findings by host, entity, and time. Verdict is rule, loglm, both, or missed. Cite matching Finding ids. Unknown keys on a step are ignored.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Action-trace steps. Join keys are host/entity/time (hostname, src_ip, user, started_at/ended_at or timestamp). Unknown keys are ignored.",
+                }
+            },
+            "required": ["steps"],
+        },
+    },
+]
+
+# DeepTempo Findings Tools (Already implemented in backend)
+DEEPTEMPO_FINDING_TOOLS = [
+    {
+        "name": "list_findings",
+        "description": "List security findings with server-side pagination and compact summaries. Returns compact finding summaries (use get_finding for full details). Supports filtering by severity, data_source, status, and pagination via offset/limit.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "severity": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Filter by severity level",
+                },
+                "data_source": {
+                    "type": "string",
+                    "description": "Filter by data source (e.g., 'sysmon', 'cloudtrail')",
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Filter by status (e.g., 'new', 'investigating', 'resolved')",
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["timestamp", "anomaly_score", "severity"],
+                    "description": "Column to sort by",
+                    "default": "timestamp",
+                },
+                "sort_order": {
+                    "type": "string",
+                    "enum": ["asc", "desc"],
+                    "description": "Sort direction",
+                    "default": "desc",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Pagination offset (0-based)",
+                    "default": 0,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of findings to return",
+                    "default": 20,
+                },
+            },
+        },
+    },
+    {
+        "name": "search_findings",
+        "description": "Search findings by text query across finding IDs, descriptions, and entity context. Returns compact summaries with pagination. Use get_finding for full details on specific results.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Text search query (searches finding IDs, descriptions, entity context)",
+                },
+                "severity": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Filter by severity level",
+                },
+                "data_source": {
+                    "type": "string",
+                    "description": "Filter by data source",
+                },
+                "status": {"type": "string", "description": "Filter by status"},
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["timestamp", "anomaly_score", "severity"],
+                    "default": "anomaly_score",
+                },
+                "sort_order": {
+                    "type": "string",
+                    "enum": ["asc", "desc"],
+                    "default": "desc",
+                },
+                "offset": {"type": "integer", "default": 0},
+                "limit": {"type": "integer", "default": 20},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_findings_stats",
+        "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source, status, and top MITRE techniques. Use this to get an overview before drilling into specific findings.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_finding",
+        "description": "Get detailed information about a specific finding by ID. Returns full finding details including predicted techniques and related context.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "finding_id": {
+                    "type": "string",
+                    "description": "The finding ID (e.g., 'f-20260209-001')",
+                }
+            },
+            "required": ["finding_id"],
+        },
+    },
+    {
+        "name": "list_cases",
+        "description": "List investigation cases with optional filters. Returns active and closed cases.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["open", "in_progress", "closed"],
+                    "description": "Filter by case status",
+                },
+                "severity": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Filter by severity",
+                },
+                "limit": {"type": "integer", "default": 50},
+            },
+        },
+    },
+    {
+        "name": "get_case",
+        "description": "Get detailed information about a specific case including all findings, timeline, activities, and MITRE techniques.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"case_id": {"type": "string", "description": "The case ID"}},
+            "required": ["case_id"],
+        },
+    },
+    {
+        "name": "case_records",
+        "description": "Read the case records held for an investigation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "type": "string",
+                    "description": "The case whose records to read.",
+                }
+            },
+            "required": ["case_id"],
+        },
+    },
+    {
+        "name": "create_case",
+        "description": "Create a new investigation case. Use this to organize related findings into a case for tracking and investigation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Case title/summary"},
+                "description": {
+                    "type": "string",
+                    "description": "Detailed case description",
+                },
+                "severity": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Case severity",
+                },
+                "finding_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional: Initial findings to add to case",
+                },
+            },
+            "required": ["title", "severity"],
+        },
+    },
+    {
+        "name": "add_finding_to_case",
+        "description": "Add a finding to an existing case.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {"type": "string"},
+                "finding_id": {"type": "string"},
+            },
+            "required": ["case_id", "finding_id"],
+        },
+    },
+    {
+        "name": "update_case",
+        "description": "Update an existing case's title, description, status, or priority.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {"type": "string", "description": "The case ID to update"},
+                "title": {"type": "string", "description": "New title"},
+                "description": {
+                    "type": "string",
+                    "description": "New description or executive summary",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["open", "investigating", "resolved", "closed"],
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                },
+            },
+            "required": ["case_id"],
+        },
+    },
+    {
+        "name": "add_resolution_step",
+        "description": "Add a resolution step to a case documenting a containment, eradication, or recovery action taken or recommended.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {"type": "string", "description": "The case ID"},
+                "description": {
+                    "type": "string",
+                    "description": "What needs to be done or was done",
+                },
+                "action_taken": {
+                    "type": "string",
+                    "description": "The specific action taken or recommended",
+                },
+                "result": {
+                    "type": "string",
+                    "description": "Outcome or expected outcome of the action",
+                },
+            },
+            "required": ["case_id", "description", "action_taken"],
+        },
+    },
+    {
+        "name": "list_completed_hunts",
+        "description": (
+            "Return completed threat-hunt runs that finished in an "
+            "assessment window. Each hunt is the existing hunt projection: "
+            "hypotheses (with provenance), evidence provenance, verdict, "
+            "checkpoint resolutions (approver identity), and timestamps. "
+            "Hunts whose projection is not yet available are omitted."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start": {
+                    "type": "string",
+                    "description": "Window start (ISO-8601 timestamp)",
+                },
+                "end": {
+                    "type": "string",
+                    "description": "Window end (ISO-8601 timestamp)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of completed hunts to return",
+                    "default": 200,
+                },
+            },
+            "required": ["start", "end"],
+        },
+    },
+    {
+        "name": "list_learning_episodes",
+        "description": (
+            "What AegisSOC learned in a window: one episode per concluded hunt or "
+            "case, read from distilled memory. Each carries kind, "
+            "investigation_id, origin_run_id (null for a case), concluded_at, "
+            "and a payload of the verdicts (with source stances) and gaps that "
+            "investigation recorded. An investigation that concluded nothing is "
+            "still an episode. Read-only."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start": {
+                    "type": "string",
+                    "description": "Window start (ISO-8601 timestamp or date)",
+                },
+                "end": {
+                    "type": "string",
+                    "description": "Window end (ISO-8601 timestamp or date, inclusive)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of episodes to return, newest first",
+                    "default": 200,
+                },
+            },
+            "required": ["start", "end"],
+        },
+    },
+    {
+        "name": "export_learning_episodes",
+        "description": (
+            "Write a chosen set of learning episodes to a JSONL file in the "
+            "exports directory, one episode per line, selected by "
+            "{kind, investigation_id} pairs from list_learning_episodes. By "
+            "default entity values are redacted to their type (ip:*); pass "
+            "identified=true to keep them. An empty selection writes no file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "episodes": {
+                    "type": "array",
+                    "description": "Episodes to export, as returned by list_learning_episodes",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["hunt", "case"]},
+                            "investigation_id": {"type": "string"},
+                        },
+                        "required": ["kind", "investigation_id"],
+                    },
+                },
+                "identified": {
+                    "type": "boolean",
+                    "description": "Keep entity values instead of redacting them to their type",
+                    "default": False,
+                },
+                "name": {
+                    "type": "string",
+                    "description": "File stem under the exports directory; defaults to a timestamped name",
+                },
+            },
+            "required": ["episodes"],
+        },
+    },
+    {
+        "name": "replay_hunt",
+        "description": (
+            "Replay a completed threat hunt: for each decision the hunt lead "
+            "took, the digest it was shown is rebuilt from the ledger and "
+            "compared with the one recorded (rebuilt, recorded, mismatch), "
+            "alongside what memory recalled for the hunt. Pass decision_id "
+            "to narrow the report to one decision."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "type": "string",
+                    "description": "Workflow run id of the hunt (a uuid)",
+                },
+                "decision_id": {
+                    "type": "string",
+                    "description": "Replay only this decision",
+                },
+            },
+            "required": ["run_id"],
+        },
+    },
+]
+
+# Attack Layer Tools
+ATTACK_LAYER_TOOLS = [
+    {
+        "name": "get_technique_rollup",
+        "description": "Get rollup statistics for MITRE techniques showing finding counts and severity distribution.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tactic": {
+                    "type": "string",
+                    "description": "Optional: Filter by MITRE tactic (e.g., 'initial-access', 'execution')",
+                }
+            },
+        },
+    },
+]
+
+# Approval Tools
+APPROVAL_TOOLS = [
+    {
+        "name": "list_pending_approvals",
+        "description": "List pending actions awaiting approval. Returns actions that require analyst approval before execution (e.g., host isolation, IP blocking).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of pending actions to return",
+                    "default": 50,
+                }
+            },
+        },
+    },
+    {
+        "name": "get_approval_action",
+        "description": "Get detailed information about a specific pending action by ID.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action_id": {
+                    "type": "string",
+                    "description": "The action ID (e.g., 'action-20260209-001')",
+                }
+            },
+            "required": ["action_id"],
+        },
+    },
+    {
+        "name": "approve_action",
+        "description": "Approve a pending action for execution. The action will be executed automatically after approval.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action_id": {
+                    "type": "string",
+                    "description": "The action ID to approve",
+                },
+                "approved_by": {
+                    "type": "string",
+                    "description": "Name of approver (e.g., 'analyst_name', 'auto_approved')",
+                    "default": "analyst",
+                },
+            },
+            "required": ["action_id"],
+        },
+    },
+    {
+        "name": "reject_action",
+        "description": "Reject a pending action. The action will not be executed and will be marked as rejected.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action_id": {
+                    "type": "string",
+                    "description": "The action ID to reject",
+                },
+                "reason": {"type": "string", "description": "Reason for rejection"},
+                "rejected_by": {
+                    "type": "string",
+                    "description": "Name of person rejecting",
+                    "default": "analyst",
+                },
+            },
+            "required": ["action_id", "reason"],
+        },
+    },
+    {
+        "name": "get_approval_stats",
+        "description": "Get statistics about approval actions including total, pending, approved, rejected, and executed counts.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+]
+
+# The local indicator database the threat-feed poller fills. Present whether or
+# not a deployment carries an external intel integration, which is why it is here
+# rather than left to MCP.
+THREAT_INTEL_TOOLS = [
+    {
+        "name": "lookup_indicators",
+        "description": (
+            "Look up observables in AegisSOC's threat-indicator database, populated "
+            "from the configured threat feeds. Returns one row per value asked "
+            "about, with known=false for any the feeds do not carry -- an "
+            "indicator no feed knows is a finding about the indicator."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "indicator_type": {
+                    "type": "string",
+                    "description": "What kind of observable these are",
+                    "enum": ["ip", "domain", "url", "md5", "sha1", "sha256"],
+                    "default": "ip",
+                },
+                "values": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "The observables to look up, in one batch",
+                },
+            },
+            "required": ["values"],
+        },
+    },
+    {
+        "name": "propose_feed_hunts",
+        "description": (
+            "Which recently fed threat indicators has nobody hunted? Reads the "
+            "newest rows of AegisSOC's threat-indicator database and runs each "
+            "through the same coverage check as `check_hunt_coverage`. Returns "
+            "one entry per uncovered indicator with its Entity Key, the feed row "
+            "(type, value, source, last_seen) and a `proposal` body for "
+            "POST /api/workflows/threat-hunt/execute; indicators already "
+            "`running` or `concluded` are counted and omitted. Read-only: this "
+            "never starts a hunt."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        "How many of the most recent indicators to classify "
+                        "(capped at 200)"
+                    ),
+                    "default": 200,
+                },
+            },
+        },
+    },
+]
+
+# Episodic memory (#732). Reading it is a backend tool rather than an MCP server
+# because the rows are AegisSOC's own: a deployment that has run a hunt has memory
+# to read, and one that has not gets empty lists.
+MEMORY_TOOLS = [
+    {
+        "name": RECALL_TOOL,
+        "description": (
+            "Recall what past investigations saw and concluded about an entity. "
+            "Returns the Sightings (what was observed, per investigation and "
+            "source), the Verdicts (what was concluded, with the stance of each "
+            "corroborating source) and the Declared Gaps (questions nobody "
+            "gathered evidence for) for each Entity Key given as `type:value`. "
+            "An entity nobody has investigated returns empty lists, which is an "
+            "answer and not an error. Results are capped per key and overall; "
+            "`dropped` says what was left out and `ranking` says on what basis. "
+            "Pass your own role in `caller_kind` and `caller_id`: every read is "
+            "logged for audit, and one that does not say who asked is logged as "
+            "`unknown`."
+        ),
+        "input_schema": RECALL_PARAMETERS,
+    },
+    {
+        "name": "check_hunt_coverage",
+        "description": (
+            "Before proposing a hunt from a threat report, ask whether one already "
+            "covers it. Pass the report text (STIX bundle or plain text) and/or "
+            "already-extracted Entity Keys (`type:value`) and ATT&CK technique ids. "
+            "Answers `running` (a hunt is on it now; extend that run via "
+            "POST /api/agent-runs/{run_id}/directives kind `extend`), `concluded` "
+            "(a past hunt reached a Verdict; rows carry outcome, date and "
+            "origin_run_id) or `uncovered`. The last two include a `proposal` body "
+            "for POST /api/workflows/threat-hunt/execute. Matched and unmatched "
+            "keys and techniques are listed. Read-only: this never starts a hunt."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "report": {
+                    "type": "string",
+                    "description": "The report: a STIX 2.x bundle or plain text",
+                },
+                "entity_keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Entity Keys already extracted, as `type:value`",
+                },
+                "techniques": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "ATT&CK technique ids already extracted (T1566)",
+                },
+            },
+        },
+    },
+]
+
+# Combine all tools
+ALL_TOOLS = (
+    SECURITY_DETECTION_TOOLS
+    + DEEPTEMPO_FINDING_TOOLS
+    + ATTACK_LAYER_TOOLS
+    + THREAT_INTEL_TOOLS
+    + APPROVAL_TOOLS
+    + MEMORY_TOOLS
+)
