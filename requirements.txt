@@ -1,7 +1,7 @@
 # AegisSOC - Requirements
 
 # Core
-numpy>=2.5.2
+numpy>=2.5.3
 # Risk-triage engine: GUIDE aggregation, benchmark (NDCG), NNLS calibration
 pandas>=2.2.0
 scipy>=1.13.0
